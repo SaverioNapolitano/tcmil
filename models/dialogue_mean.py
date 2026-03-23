@@ -6,12 +6,9 @@ Architecture:
     3. Mean-pool all utterance embeddings for an interview.
     4. Feed the pooled embedding through a small classification head.
 
-Why CLS token?
-    RoBERTa is pretrained with a CLS token that aggregates sequence-level
-    information. For sentence-level representations without fine-tuning,
-    CLS is the simplest robust option and performs well empirically.
-    Mean-pooling over all tokens is an alternative, but adds complexity
-    with attention mask handling for marginal gain in this baseline.
+For this version, the encoder is kept completely frozen. Utterance
+embeddings are pre-computed once to radically speed up training of the
+classification head.
 """
 
 import torch
@@ -60,7 +57,7 @@ def encode_utterances(
         cls_embeddings = outputs.last_hidden_state[:, 0, :]  # (batch, hidden_dim)
         all_embeddings.append(cls_embeddings.cpu())
 
-    return torch.cat(all_embeddings, dim=0)  # (n_utterances, hidden_dim)
+    return torch.cat(all_embeddings, dim=0)
 
 
 def mean_pool_interview(utterance_embeddings: torch.Tensor) -> torch.Tensor:

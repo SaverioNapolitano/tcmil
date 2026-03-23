@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Train and evaluate the Dialogue Mean baseline for binary depression classification.
+"""Train and evaluate the Dialogue Mean baseline with frozen encoder.
 
 Usage:
     cd /path/to/damil-2
     uv run python scripts/train_dialogue_mean.py
 
-All outputs are saved to outputs/dialogue_mean/.
+All outputs are saved to outputs/dialogue_mean_frozen/.
 """
 
 import json
@@ -41,7 +41,7 @@ from utils.plots import (
 )
 
 # ──────────────────────────────────────────────────────────────────────
-# Configuration — all in one place, no config framework needed
+# Configuration
 # ──────────────────────────────────────────────────────────────────────
 ENCODER_NAME = "roberta-base"     # Pretrained text encoder
 POOLING = "cls"                   # CLS token pooling
@@ -58,7 +58,7 @@ TRAIN_BATCH_SIZE = 16             # Mini-batch size for classifier training
 
 SEED = 42                         # Reproducibility
 DATA_DIR = PROJECT_ROOT / "data"
-OUTPUT_DIR = PROJECT_ROOT / "outputs" / "dialogue_mean"
+OUTPUT_DIR = PROJECT_ROOT / "outputs" / "dialogue_mean_frozen"
 
 
 def set_seed(seed: int) -> None:
@@ -77,13 +77,7 @@ def precompute_embeddings(
     device: torch.device,
     split_name: str,
 ) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
-    """Pre-compute mean-pooled interview embeddings for all interviews in a split.
-
-    Returns:
-        embeddings: Tensor of shape (n_interviews, hidden_dim)
-        labels: Tensor of shape (n_interviews,)
-        ids: List of interview IDs
-    """
+    """Pre-compute mean-pooled interview embeddings."""
     embeddings = []
     labels = []
     ids = []
@@ -95,7 +89,6 @@ def precompute_embeddings(
         pid = iv["interview_id"]
 
         if len(utterances) == 0:
-            # Zero utterances → zero vector, with a warning
             print(f"  [WARN] Interview {pid} has 0 utterances, using zero vector.")
             emb = torch.zeros(HIDDEN_DIM)
         else:
@@ -110,13 +103,11 @@ def precompute_embeddings(
         ids.append(pid)
         norms.append(emb.norm().item())
 
-    embeddings = torch.stack(embeddings)  # (n, hidden_dim)
+    embeddings = torch.stack(embeddings)
     labels = torch.tensor(labels, dtype=torch.float32)
 
-    # Print embedding statistics for debugging
     print(f"\n  {split_name} embedding stats:")
     print(f"    norm: mean={np.mean(norms):.3f}, std={np.std(norms):.3f}")
-    print(f"    n_utterances contributing: {[len(iv['utterances']) for iv in interviews][:5]}...")
 
     return embeddings, labels, ids
 
@@ -151,7 +142,7 @@ def train_one_epoch(
         total_loss += loss.item()
         n_batches += 1
 
-    return total_loss / n_batches
+    return total_loss / max(n_batches, 1)
 
 
 @torch.no_grad()
@@ -184,11 +175,11 @@ def generate_report(
 ) -> None:
     """Generate a human-readable markdown report."""
     report = []
-    report.append("# Dialogue Mean Baseline — Experiment Report\n")
+    report.append("# Dialogue Mean Baseline — Experiment Report (Frozen Encoder)\n")
     report.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     report.append("## Configuration\n")
-    report.append(f"- **Encoder**: `{config['encoder']}`")
+    report.append(f"- **Encoder**: `{config['encoder']}` (frozen)")
     report.append(f"- **Pooling**: `{config['pooling']}` (CLS token)")
     report.append(f"- **Max token length**: {config['max_token_length']}")
     report.append(f"- **Hidden dim**: {config['hidden_dim']}")
@@ -222,14 +213,13 @@ def generate_report(
         report.append("")
 
     report.append("## Plots\n")
-    report.append("See the `outputs/dialogue_mean/` directory for all plots.")
+    report.append(f"See the `outputs/{output_dir.name}/` directory for all plots.")
     report.append("")
 
     report.append("## Limitations\n")
     report.append("- No fine-tuning of the pretrained encoder (frozen features only).")
     report.append("- Speaker role information is ignored.")
     report.append("- No utterance weighting — all utterances contribute equally.")
-    report.append("- CLS token may not be the optimal sentence embedding strategy.")
     report.append("- Small dataset (~190 interviews total) limits generalization.")
     report.append("")
 
@@ -240,20 +230,20 @@ def generate_report(
 
 def main() -> None:
     print("=" * 60)
-    print("  Dialogue Mean Baseline — Training & Evaluation")
+    print("  Dialogue Mean Baseline — Training & Evaluation (Frozen)")
     print("=" * 60)
 
     set_seed(SEED)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\nDevice: {device}")
-    print(f"Encoder: {ENCODER_NAME}")
+    print(f"Encoder: {ENCODER_NAME} (frozen)")
     print(f"Pooling: {POOLING}")
 
     # Create output directory
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── Load data ──────────────────────────────────────────────────
+    # ── Load data ──
     print("\n── Loading interviews ──")
     train_interviews = load_interviews(DATA_DIR, "train")
     val_interviews = load_interviews(DATA_DIR, "dev")
@@ -264,18 +254,17 @@ def main() -> None:
     utterance_counts["val"] = print_split_stats(val_interviews, "dev")
     utterance_counts["test"] = print_split_stats(test_interviews, "test")
 
-    # ── Load encoder ───────────────────────────────────────────────
+    # ── Load encoder ──
     print(f"\n── Loading encoder: {ENCODER_NAME} ──")
     tokenizer = AutoTokenizer.from_pretrained(ENCODER_NAME)
     encoder = AutoModel.from_pretrained(ENCODER_NAME)
     encoder.eval()
     encoder.to(device)
 
-    # Freeze encoder — we only train the classifier head
     for param in encoder.parameters():
         param.requires_grad = False
 
-    # ── Pre-compute embeddings ──────────────────────────────────────
+    # ── Pre-compute embeddings ──
     print("\n── Pre-computing interview embeddings ──")
     train_emb, train_labels, train_ids = precompute_embeddings(
         train_interviews, tokenizer, encoder, device, "train"
@@ -287,18 +276,17 @@ def main() -> None:
         test_interviews, tokenizer, encoder, device, "test"
     )
 
-    # Free encoder memory
     del encoder
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # ── Compute pos_weight for class imbalance ──────────────────────
+    # ── Compute pos_weight ──
     n_pos = train_labels.sum().item()
     n_neg = len(train_labels) - n_pos
     pos_weight = torch.tensor([n_neg / n_pos]) if n_pos > 0 else torch.tensor([1.0])
-    print(f"\nClass imbalance: {int(n_neg)} neg, {int(n_pos)} pos → pos_weight={pos_weight.item():.3f}")
+    print(f"\npos_weight={pos_weight.item():.3f}")
 
-    # ── Initialize model ────────────────────────────────────────────
+    # ── Initialize model ──
     model = DialogueMeanClassifier(hidden_dim=HIDDEN_DIM, dropout=DROPOUT).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
@@ -307,9 +295,9 @@ def main() -> None:
 
     print(f"\nClassifier: {model}")
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Trainable parameters: {n_params}")
+    print(f"Trainable parameters: {n_params:,}")
 
-    # ── Training loop ────────────────────────────────────────────────
+    # ── Training loop ──
     print("\n── Training ──")
     history = {
         "epoch": [], "train_loss": [], "val_loss": [],
@@ -322,27 +310,20 @@ def main() -> None:
     patience_counter = 0
 
     for epoch in range(1, NUM_EPOCHS + 1):
-        # Train
         train_loss = train_one_epoch(
             model, train_emb, train_labels, optimizer, criterion, device
         )
 
-        # Evaluate on train and val
-        train_loss_eval, train_preds, train_probs = evaluate(
+        _, train_preds, train_probs = evaluate(
             model, train_emb, train_labels, criterion, device
         )
         val_loss, val_preds, val_probs = evaluate(
             model, val_emb, val_labels, criterion, device
         )
 
-        train_m = compute_metrics(
-            train_labels.numpy(), train_preds,  train_probs
-        )
-        val_m = compute_metrics(
-            val_labels.numpy(), val_preds, val_probs
-        )
+        train_m = compute_metrics(train_labels.numpy(), train_preds, train_probs)
+        val_m = compute_metrics(val_labels.numpy(), val_preds, val_probs)
 
-        # Record history
         history["epoch"].append(epoch)
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
@@ -351,30 +332,31 @@ def main() -> None:
         history["train_balanced_accuracy"].append(train_m["balanced_accuracy"])
         history["val_balanced_accuracy"].append(val_m["balanced_accuracy"])
 
-        # Print progress every 5 epochs or at start
-        if epoch <= 3 or epoch % 5 == 0 or epoch == NUM_EPOCHS:
-            print(
-                f"  Epoch {epoch:3d} | "
-                f"train_loss={train_loss:.4f} val_loss={val_loss:.4f} | "
-                f"train_f1={train_m['f1']:.4f} val_f1={val_m['f1']:.4f} | "
-                f"val_bacc={val_m['balanced_accuracy']:.4f}"
-            )
-
-        # Early stopping on val F1
+        marker = ""
         if val_m["f1"] > best_val_f1:
             best_val_f1 = val_m["f1"]
             best_epoch = epoch
             patience_counter = 0
             torch.save(model.state_dict(), OUTPUT_DIR / "best_model.pt")
+            marker = " ★"
         else:
             patience_counter += 1
-            if patience_counter >= PATIENCE:
-                print(f"\n  Early stopping at epoch {epoch} (patience={PATIENCE}).")
-                break
+
+        if epoch <= 3 or epoch % 5 == 0 or epoch == NUM_EPOCHS or patience_counter >= PATIENCE:
+            print(
+                f"  Epoch {epoch:3d} | "
+                f"train_loss={train_loss:.4f} val_loss={val_loss:.4f} | "
+                f"train_f1={train_m['f1']:.4f} val_f1={val_m['f1']:.4f} | "
+                f"val_bacc={val_m['balanced_accuracy']:.4f}{marker}"
+            )
+
+        if patience_counter >= PATIENCE:
+            print(f"\n  Early stopping at epoch {epoch} (patience={PATIENCE}).")
+            break
 
     print(f"\n  Best epoch: {best_epoch} (val F1={best_val_f1:.4f})")
 
-    # ── Evaluate best model ──────────────────────────────────────────
+    # ── Evaluate best model ──
     print("\n── Evaluating best model ──")
     model.load_state_dict(torch.load(OUTPUT_DIR / "best_model.pt", weights_only=True))
 
@@ -399,7 +381,6 @@ def main() -> None:
                 print(f"    {k}: {v:.4f}")
         print(f"    confusion_matrix: {cm}")
 
-        # Collect predictions
         for pid, yt, yp, prob in zip(ids, y_true, preds, probs):
             predictions_rows.append({
                 "interview_id": pid,
@@ -409,37 +390,31 @@ def main() -> None:
                 "probability": float(prob),
             })
 
-        # Plots for this split
         plot_roc_curve(y_true, probs, split_name, OUTPUT_DIR)
         plot_pr_curve(y_true, probs, split_name, OUTPUT_DIR)
         plot_confusion_matrix(y_true, preds, split_name, OUTPUT_DIR)
         plot_probability_histogram(y_true, probs, split_name, OUTPUT_DIR)
 
-    # ── Save outputs ─────────────────────────────────────────────────
+    # ── Save outputs ──
     print("\n── Saving outputs ──")
 
-    # metrics.json
     with open(OUTPUT_DIR / "metrics.json", "w") as f:
         json.dump(metrics_all, f, indent=2)
-    print(f"  Saved metrics.json")
+    print("  Saved metrics.json")
 
-    # predictions.csv
     pred_df = pd.DataFrame(predictions_rows)
     pred_df.to_csv(OUTPUT_DIR / "predictions.csv", index=False)
     print(f"  Saved predictions.csv ({len(pred_df)} rows)")
 
-    # train_history.csv
     hist_df = pd.DataFrame(history)
     hist_df.to_csv(OUTPUT_DIR / "train_history.csv", index=False)
     print(f"  Saved train_history.csv ({len(hist_df)} rows)")
 
-    # Plots: loss and metric curves
     plot_loss_curves(history["train_loss"], history["val_loss"], OUTPUT_DIR)
     plot_metric_curves(history, ["f1", "balanced_accuracy"], OUTPUT_DIR)
     plot_utterance_distribution(utterance_counts, OUTPUT_DIR)
     print("  Saved all plots")
 
-    # Report
     config = {
         "encoder": ENCODER_NAME,
         "pooling": POOLING,
@@ -458,7 +433,6 @@ def main() -> None:
         "pos_weight": pos_weight.item(),
     }
     generate_report(config, metrics_all, train_stats, OUTPUT_DIR)
-    print(f"  Saved report.md")
 
     print("\n" + "=" * 60)
     print(f"  All outputs saved to: {OUTPUT_DIR}")
