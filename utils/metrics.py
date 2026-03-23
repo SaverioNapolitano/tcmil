@@ -88,3 +88,15 @@ def find_best_threshold(
             
     return float(best_t)
 
+
+def compute_attention_entropy(attention_weights: np.ndarray, eps: float = 1e-9) -> float:
+    """Compute the entropy of an attention distribution.
+    
+    Args:
+        attention_weights: Array of shape [Num_Utterances] summing to 1.
+        eps: Small value to avoid log(0).
+        
+    Returns:
+        Entropy value.
+    """
+    return float(-np.sum(attention_weights * np.log(attention_weights + eps)))

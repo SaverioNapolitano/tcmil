@@ -1,4 +1,4 @@
-"""Training script for Flat MIL Mean Pooling Baseline."""
+"""Training script for Flat MIL Attention Pooling Baseline."""
 
 import argparse
 import json
@@ -19,8 +19,8 @@ from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 sys.path.append(str(Path(__file__).parent.parent))
 
 from dataset import load_interviews, print_split_stats
-from models.flat_mil_mean import FlatMILMeanPooling
-from utils.metrics import compute_metrics, confusion_matrix_dict, find_best_threshold
+from models.flat_mil_attention import FlatMILAttention
+from utils.metrics import compute_metrics, confusion_matrix_dict, find_best_threshold, compute_attention_entropy
 from utils.plots import (
     plot_confusion_matrix,
     plot_loss_curves,
@@ -30,6 +30,8 @@ from utils.plots import (
     plot_probability_histogram,
     plot_roc_curve,
     plot_utterance_distribution,
+    plot_attention_entropy,
+    plot_attention_weights_bar,
 )
 
 
@@ -61,6 +63,7 @@ def build_collate_fn(tokenizer, max_length: int):
         labels = []
         all_utterances = []
         bag_sizes = []
+        utterances_lists = []
         
         for item in batch:
             interview_ids.append(item["interview_id"])
@@ -69,6 +72,7 @@ def build_collate_fn(tokenizer, max_length: int):
             utts = item["utterances"] if item["utterances"] else [""]
             all_utterances.extend(utts)
             bag_sizes.append(len(utts))
+            utterances_lists.append(utts)
             
         encoded = tokenizer(
             all_utterances,
@@ -84,6 +88,7 @@ def build_collate_fn(tokenizer, max_length: int):
             "input_ids": encoded["input_ids"],
             "attention_mask": encoded["attention_mask"],
             "bag_sizes": bag_sizes,
+            "utterances_lists": utterances_lists,
         }
     return collate_fn
 
@@ -102,7 +107,7 @@ def train_epoch(model, dataloader, criterion, optimizer, scheduler, device):
         bag_sizes = batch["bag_sizes"]
         
         optimizer.zero_grad()
-        logits = model(input_ids, attention_mask, bag_sizes)
+        logits, _ = model(input_ids, attention_mask, bag_sizes)
         loss = criterion(logits, labels)
         
         loss.backward()
@@ -132,14 +137,18 @@ def evaluate(model, dataloader, criterion, device, threshold=0.5):
     all_probs = []
     all_preds = []
     all_bag_sizes = []
+    all_attention_weights = []
+    all_entropies = []
+    all_utterance_texts = []
     
     for batch in dataloader:
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["labels"].to(device)
         bag_sizes = batch["bag_sizes"]
+        utterances_lists = batch["utterances_lists"]
         
-        logits = model(input_ids, attention_mask, bag_sizes)
+        logits, att_weights_list = model(input_ids, attention_mask, bag_sizes)
         loss = criterion(logits, labels)
         total_loss += loss.item()
         
@@ -151,7 +160,13 @@ def evaluate(model, dataloader, criterion, device, threshold=0.5):
         all_probs.extend(probs)
         all_preds.extend(preds)
         all_bag_sizes.extend(bag_sizes)
+        all_utterance_texts.extend(utterances_lists)
         
+        for aw in att_weights_list:
+            aw_np = aw.cpu().numpy()
+            all_attention_weights.append(aw_np)
+            all_entropies.append(compute_attention_entropy(aw_np))
+            
     avg_loss = total_loss / len(dataloader)
     
     # Compute metrics
@@ -167,17 +182,21 @@ def evaluate(model, dataloader, criterion, device, threshold=0.5):
         "predicted_label": all_preds,
         "probability": all_probs,
         "num_utterances": all_bag_sizes,
+        "attention_weights": all_attention_weights,
+        "attention_entropy": all_entropies,
+        "utterance_texts": all_utterance_texts,
     }
     
     return avg_loss, metrics, predictions
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Flat MIL Mean Pooling Baseline")
+    parser = argparse.ArgumentParser(description="Train Flat MIL Attention Pooling Baseline")
     parser.add_argument("--data_dir", type=str, default="data", help="Directory containing preprocessed data")
-    parser.add_argument("--output_dir", type=str, default="results/flat_mil_mean", help="Output directory")
+    parser.add_argument("--output_dir", type=str, default="results/flat_mil_attention", help="Output directory")
     parser.add_argument("--model_name", type=str, default="distilbert-base-uncased", help="Pretrained encoder name")
     parser.add_argument("--proj_dim", type=int, default=128, help="Projection dimension (0 to disable)")
+    parser.add_argument("--att_hidden_dim", type=int, default=128, help="Attention hidden dimension")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size (number of bags)")
     parser.add_argument("--max_epochs", type=int, default=20, help="Maximum number of epochs")
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
@@ -229,7 +248,7 @@ def main():
     # --- Model Setup ---
     logger.info(f"Initializing model {args.model_name}...")
     proj_dim = args.proj_dim if args.proj_dim > 0 else None
-    model = FlatMILMeanPooling(args.model_name, proj_dim=proj_dim)
+    model = FlatMILAttention(args.model_name, proj_dim=proj_dim, att_hidden_dim=args.att_hidden_dim)
     model.to(device)
     
     num_pos = sum(1 for iv in train_data if iv["label"] == 1)
@@ -315,17 +334,20 @@ def main():
         json.dump(final_metrics, f, indent=4)
         
     # Process and save predictions
-    dev_df = pd.DataFrame(dev_preds)
+    dev_df = pd.DataFrame({k: v for k, v in dev_preds.items() if k not in ["attention_weights", "utterance_texts"]})
     dev_df.insert(1, "split", "dev")
-    test_df = pd.DataFrame(test_preds)
+    test_df = pd.DataFrame({k: v for k, v in test_preds.items() if k not in ["attention_weights", "utterance_texts"]})
     test_df.insert(1, "split", "test")
     
     all_preds_df = pd.concat([dev_df, test_df], ignore_index=True)
     all_preds_df.to_csv(out_dir / "predictions.csv", index=False)
     
     # Generate Plots
-    logger.info("Generating evaluation plots...")
-    for split_name, df, metrics_dict in [("dev", dev_df, dev_metrics), ("test", test_df, test_metrics)]:
+    logger.info("Generating evaluation plots and attention reports...")
+    all_attention_records = []
+    attention_examples_md = "# Attention Interpretation Examples\n\n"
+    
+    for split_name, df, metrics_dict, preds_dict in [("dev", dev_df, dev_metrics, dev_preds), ("test", test_df, test_metrics, test_preds)]:
         y_true = df["true_label"].values
         y_pred = df["predicted_label"].values
         y_prob = df["probability"].values
@@ -336,6 +358,21 @@ def main():
         plot_confusion_matrix(y_true, y_pred, split_name, out_dir)
         plot_probability_histogram(y_true, y_prob, split_name, out_dir)
         plot_prob_vs_bag_size(bag_sizes, y_prob, split_name, out_dir)
+        plot_attention_entropy(preds_dict["attention_entropy"], split_name, out_dir)
+        
+        # Collect attention weights for JSONL
+        for i, iv_id in enumerate(preds_dict["interview_id"]):
+            weights = preds_dict["attention_weights"][i]
+            texts = preds_dict["utterance_texts"][i]
+            
+            for u_idx, (w, t) in enumerate(zip(weights, texts)):
+                all_attention_records.append({
+                    "interview_id": iv_id,
+                    "split": split_name,
+                    "utterance_index": u_idx,
+                    "attention_weight": float(w),
+                    "utterance_text": t
+                })
 
     # Utterance distribution
     utterance_counts = {
@@ -345,6 +382,46 @@ def main():
     }
     plot_utterance_distribution(utterance_counts, out_dir)
     
+    # Save attention weights JSONL
+    with open(out_dir / "attention_weights.jsonl", "w") as f:
+        for r in all_attention_records:
+            f.write(json.dumps(r) + "\n")
+            
+    # Qualitative Report (sample from test)
+    num_test_samples = min(5, len(test_preds["interview_id"]))
+    if num_test_samples > 0:
+        sample_indices = np.random.choice(len(test_preds["interview_id"]), num_test_samples, replace=False)
+        for idx in sample_indices:
+            iv_id = test_preds["interview_id"][idx]
+            weights = test_preds["attention_weights"][idx]
+            texts = test_preds["utterance_texts"][idx]
+            true_label = test_preds["true_label"][idx]
+            prob = test_preds["probability"][idx]
+            
+            example_dict = {
+                "interview_id": iv_id,
+                "true_label": true_label,
+                "probability": prob,
+                "attention_weights": weights,
+                "utterance_texts": texts
+            }
+            
+            # Plot bar chart
+            plot_attention_weights_bar(example_dict, out_dir, f"attention_bar_{iv_id}.png")
+            
+            # Add to Markdown report
+            attention_examples_md += f"## Interview: {iv_id}\n"
+            attention_examples_md += f"- **True Label**: {true_label}\n"
+            attention_examples_md += f"- **Predicted Probability**: {prob:.4f}\n\n"
+            attention_examples_md += "### Top 5 Attended Utterances\n"
+            
+            top_indices = np.argsort(weights)[::-1][:min(5, len(weights))]
+            for t_idx in top_indices:
+                attention_examples_md += f"**[{t_idx}]** (weight: {weights[t_idx]:.4f}): {texts[t_idx]}\n\n"
+                
+        with open(out_dir / "attention_examples.md", "w") as f:
+            f.write(attention_examples_md)
+            
     # Save a small sample table for quick inspection
     sample_df = all_preds_df.sample(min(15, len(all_preds_df)), random_state=args.seed)
     cols_to_print = ["interview_id", "split", "num_utterances", "true_label", "predicted_label", "probability"]
@@ -353,7 +430,7 @@ def main():
     
     # Save to a markdown file
     with open(out_dir / "summary.md", "w") as f:
-        f.write("# Flat MIL Mean Pooling Baseline\n\n")
+        f.write("# Flat MIL Attention Pooling Baseline\n\n")
         f.write("## Metrics\n```json\n")
         f.write(json.dumps(final_metrics, indent=4))
         f.write("\n```\n\n")

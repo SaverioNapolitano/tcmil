@@ -1,19 +1,20 @@
-"""Flat MIL with mean pooling baseline model for binary interview-level classification."""
+"""Flat MIL with attention pooling baseline model for binary interview-level classification."""
 
 import torch
 import torch.nn as nn
 from transformers import AutoModel
 
 
-class FlatMILMeanPooling(nn.Module):
+class FlatMILAttention(nn.Module):
     """
-    Flat MIL baseline with mean pooling.
+    Flat MIL baseline with attention pooling.
     
     This model treats an interview as a bag of utterances. It encodes each utterance
     independently using a pretrained text encoder, optionally projects the embeddings,
-    aggregates them via mean pooling, and finally predicts a binary logit for the bag.
+    applies a learned attention mechanism over the utterances to compute attention weights,
+    aggregates them via the attention weights, and finally predicts a binary logit for the bag.
     """
-    def __init__(self, transformer_name: str, proj_dim: int | None = None):
+    def __init__(self, transformer_name: str, proj_dim: int | None = None, att_hidden_dim: int = 128):
         super().__init__()
         # Utterance encoder
         self.encoder = AutoModel.from_pretrained(transformer_name)
@@ -30,6 +31,10 @@ class FlatMILMeanPooling(nn.Module):
             self.projector = nn.Identity()
             agg_dim = hidden_size
             
+        # Attention MIL pooler
+        self.attention_V = nn.Linear(agg_dim, att_hidden_dim)
+        self.attention_w = nn.Linear(att_hidden_dim, 1, bias=False)
+            
         # Bag classifier
         self.classifier = nn.Linear(agg_dim, 1)
         
@@ -38,7 +43,7 @@ class FlatMILMeanPooling(nn.Module):
         input_ids: torch.Tensor, 
         attention_mask: torch.Tensor, 
         bag_sizes: list[int]
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """
         Forward pass.
         
@@ -49,6 +54,7 @@ class FlatMILMeanPooling(nn.Module):
             
         Returns:
             logits: Tensor of shape [Batch_Size], the predicted logits for each bag.
+            attention_weights: List of Tensors of shape [Num_Utterances_in_Bag], attention scores for each bag.
         """
         # 1. Encode utterances
         # outputs.last_hidden_state: [Total_Utterances, Seq_Len, Hidden_Size]
@@ -62,16 +68,28 @@ class FlatMILMeanPooling(nn.Module):
         # projected: [Total_Utterances, Agg_Dim]
         projected = self.projector(cls_embeddings)
         
-        # 3. Bag pooling (Mean Pooling)
+        # 3. Attention MIL Bag Pooling
         # Split the flat batch back into individual bags
         bag_embeddings = torch.split(projected, bag_sizes)
         
         pooled_bags = []
+        attention_weights_list = []
         for bag in bag_embeddings:
             # bag: [Num_Utterances_in_Bag, Agg_Dim]
-            # mean_bag: [Agg_Dim]
-            mean_bag = bag.mean(dim=0)
-            pooled_bags.append(mean_bag)
+            
+            # Compute attention scores: w^T tanh(V * h)
+            # a_scores: [Num_Utterances_in_Bag, 1]
+            a_scores = self.attention_w(torch.tanh(self.attention_V(bag)))
+            
+            # a_weights: [Num_Utterances_in_Bag, 1]
+            a_weights = torch.softmax(a_scores, dim=0)
+            
+            # apply attention weights: a_weights^T * bag -> [1, Agg_Dim]
+            # using element-wise multiply and sum
+            weighted_bag = (a_weights * bag).sum(dim=0) # [Agg_Dim]
+            
+            pooled_bags.append(weighted_bag)
+            attention_weights_list.append(a_weights.squeeze(-1))
             
         # pooled: [Batch_Size, Agg_Dim]
         pooled = torch.stack(pooled_bags)
@@ -80,4 +98,4 @@ class FlatMILMeanPooling(nn.Module):
         # logits: [Batch_Size, 1] -> [Batch_Size]
         logits = self.classifier(pooled).squeeze(-1)
         
-        return logits
+        return logits, attention_weights_list

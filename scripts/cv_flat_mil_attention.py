@@ -1,8 +1,9 @@
-"""Cross-validation script for Flat MIL Mean Pooling Baseline."""
+"""Cross-validation script for Flat MIL Attention Pooling Baseline."""
 
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -12,12 +13,11 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
-import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from dataset import load_interviews
-from models.flat_mil_mean import FlatMILMeanPooling
-from scripts.train_flat_mil_mean import (
+from models.flat_mil_attention import FlatMILAttention
+from scripts.train_flat_mil_attention import (
     BagOfUtterancesDataset, 
     build_collate_fn, 
     evaluate, 
@@ -57,7 +57,7 @@ def make_train_eval_fn(args, device):
         
         # Initialize model
         proj_dim = args.proj_dim if args.proj_dim > 0 else None
-        model = FlatMILMeanPooling(args.model_name, proj_dim=proj_dim)
+        model = FlatMILAttention(args.model_name, proj_dim=proj_dim, att_hidden_dim=args.att_hidden_dim)
         model.to(device)
         
         num_pos = sum(1 for iv in train_data if iv["label"] == 1)
@@ -107,11 +107,12 @@ def make_train_eval_fn(args, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Monte Carlo CV for Flat MIL Mean Pooling")
+    parser = argparse.ArgumentParser(description="Monte Carlo CV for Flat MIL Attention Pooling")
     parser.add_argument("--data_dir", type=str, default="data", help="Directory containing preprocessed data")
-    parser.add_argument("--output_dir", type=str, default="results/cv_flat_mil_mean", help="Output directory")
+    parser.add_argument("--output_dir", type=str, default="results/cv_flat_mil_attention", help="Output directory")
     parser.add_argument("--model_name", type=str, default="prajjwal1/bert-tiny", help="Pretrained encoder name")
     parser.add_argument("--proj_dim", type=int, default=128, help="Projection dimension (0 to disable)")
+    parser.add_argument("--att_hidden_dim", type=int, default=128, help="Attention hidden dimension")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--max_epochs", type=int, default=5, help="Maximum number of epochs per run")
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
@@ -172,7 +173,7 @@ def main():
         json.dump(all_raw_metrics, f, indent=4)
         
     with open(out_dir / "cv_summary.md", "w") as f:
-        f.write(f"# Cross-Validated Results: Flat MIL Mean\n\n")
+        f.write(f"# Cross-Validated Results: Flat MIL Attention\n\n")
         f.write(f"Model: `{args.model_name}`\n")
         f.write(f"Splits: `{args.n_splits}` | Seeds per split: `{args.n_seeds}`\n\n")
         f.write(f"## Aggregated Metrics\n```\n{report}\n```\n")
