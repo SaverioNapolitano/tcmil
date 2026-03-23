@@ -110,3 +110,26 @@ def print_split_stats(interviews: list[dict], split: str) -> list[int]:
         print(f"  [WARN] {zero_utt} interviews with ZERO utterances!")
 
     return counts
+
+
+def load_all_interviews(data_dir: str | Path) -> list[dict]:
+    """Load and combine train, dev, and test splits into a single list.
+    
+    Useful for cross-validation where new splits are generated dynamically.
+    
+    Args:
+        data_dir: Path to the data directory.
+        
+    Returns:
+        A list of interview dictionaries containing all available data.
+    """
+    all_interviews = []
+    for split in ["train", "dev", "test"]:
+        try:
+            interviews = load_interviews(data_dir, split)
+            all_interviews.extend(interviews)
+        except Exception as e:
+            print(f"Warning: Could not load split '{split}': {e}")
+            
+    print(f"\nLoaded {len(all_interviews)} total interviews across all splits.")
+    return all_interviews
