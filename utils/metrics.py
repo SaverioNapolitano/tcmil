@@ -53,3 +53,38 @@ def confusion_matrix_dict(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     """
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
     return {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)}
+
+
+def find_best_threshold(
+    y_true: np.ndarray, y_prob: np.ndarray, metric: str = "f1"
+) -> float:
+    """Find the threshold in [0.01, 0.99] that maximizes the given metric.
+    
+    Args:
+        y_true: Ground truth binary labels.
+        y_prob: Predicted probabilities.
+        metric: Either 'f1' or 'balanced_accuracy'.
+        
+    Returns:
+        Best threshold value.
+    """
+    best_t = 0.5
+    best_score = -1.0
+    
+    thresholds = np.linspace(0.01, 0.99, 99)
+    for t in thresholds:
+        preds = (y_prob >= t).astype(int)
+        
+        if metric == "f1":
+            score = f1_score(y_true, preds, zero_division=0)
+        elif metric == "balanced_accuracy":
+            score = balanced_accuracy_score(y_true, preds)
+        else:
+            raise ValueError(f"Unknown tuning metric {metric}")
+            
+        if score > best_score:
+            best_score = score
+            best_t = t
+            
+    return float(best_t)
+

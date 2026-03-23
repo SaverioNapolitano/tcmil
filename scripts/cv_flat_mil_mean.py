@@ -26,6 +26,7 @@ from scripts.train_flat_mil_mean import (
 )
 from utils.evaluation import run_monte_carlo_cv
 from utils.stats import format_aggregate_report
+from utils.metrics import find_best_threshold
 
 
 def make_train_eval_fn(args, device):
@@ -59,7 +60,10 @@ def make_train_eval_fn(args, device):
         model = FlatMILMeanPooling(args.model_name, proj_dim=proj_dim)
         model.to(device)
         
-        criterion = nn.BCEWithLogitsLoss()
+        num_pos = sum(1 for iv in train_data if iv["label"] == 1)
+        num_neg = len(train_data) - num_pos
+        pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float).to(device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
         
         num_training_steps = len(train_loader) * args.max_epochs
@@ -88,7 +92,15 @@ def make_train_eval_fn(args, device):
         if best_state is not None:
             model.load_state_dict({k: v.to(device) for k, v in best_state.items()})
             
-        _, test_metrics, _ = evaluate(model, test_loader, criterion, device)
+        # Tune threshold on inner val set
+        _, _, val_preds = evaluate(model, val_loader, criterion, device, threshold=0.5)
+        best_t = find_best_threshold(
+            y_true=np.array(val_preds["true_label"]),
+            y_prob=np.array(val_preds["probability"]),
+            metric="f1"
+        )
+            
+        _, test_metrics, _ = evaluate(model, test_loader, criterion, device, threshold=best_t)
         
         return test_metrics
     return train_eval_fn

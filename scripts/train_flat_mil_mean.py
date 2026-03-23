@@ -20,7 +20,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from dataset import load_interviews, print_split_stats
 from models.flat_mil_mean import FlatMILMeanPooling
-from utils.metrics import compute_metrics, confusion_matrix_dict
+from utils.metrics import compute_metrics, confusion_matrix_dict, find_best_threshold
 from utils.plots import (
     plot_confusion_matrix,
     plot_loss_curves,
@@ -122,7 +122,7 @@ def train_epoch(model, dataloader, criterion, optimizer, scheduler, device):
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, device, threshold=0.5):
     """Evaluate the model and return loss, metrics, and predictions."""
     model.eval()
     total_loss = 0.0
@@ -144,7 +144,7 @@ def evaluate(model, dataloader, criterion, device):
         total_loss += loss.item()
         
         probs = torch.sigmoid(logits).cpu().numpy()
-        preds = (probs >= 0.5).astype(int)
+        preds = (probs >= threshold).astype(int)
         
         all_ids.extend(batch["interview_ids"])
         all_labels.extend(batch["labels"].numpy())
@@ -232,7 +232,10 @@ def main():
     model = FlatMILMeanPooling(args.model_name, proj_dim=proj_dim)
     model.to(device)
     
-    criterion = nn.BCEWithLogitsLoss()
+    num_pos = sum(1 for iv in train_data if iv["label"] == 1)
+    num_neg = len(train_data) - num_pos
+    pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float).to(device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     
     num_training_steps = len(train_loader) * args.max_epochs
@@ -284,8 +287,17 @@ def main():
     logger.info("Loading best model for final evaluation...")
     model.load_state_dict(torch.load(out_dir / "best_model.pt"))
     
-    logger.info("Evaluating on DEV split...")
-    _, dev_metrics, dev_preds = evaluate(model, dev_loader, criterion, device)
+    logger.info("Evaluating on DEV split to tune threshold...")
+    _, dev_metrics_default, dev_preds_default = evaluate(model, dev_loader, criterion, device, threshold=0.5)
+    best_t = find_best_threshold(
+        y_true=np.array(dev_preds_default["true_label"]),
+        y_prob=np.array(dev_preds_default["probability"]),
+        metric="f1"
+    )
+    logger.info(f"Best tuned threshold on DEV: {best_t:.4f}")
+    
+    # Re-evaluate with tuned threshold
+    _, dev_metrics, dev_preds = evaluate(model, dev_loader, criterion, device, threshold=best_t)
     
     test_data = load_interviews(args.data_dir, "test")
     print_split_stats(test_data, "test")
@@ -295,7 +307,7 @@ def main():
     )
     
     logger.info("Evaluating on TEST split...")
-    _, test_metrics, test_preds = evaluate(model, test_loader, criterion, device)
+    _, test_metrics, test_preds = evaluate(model, test_loader, criterion, device, threshold=best_t)
     
     # Save metrics
     final_metrics = {"dev": dev_metrics, "test": test_metrics}
