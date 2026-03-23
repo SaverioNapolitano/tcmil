@@ -131,3 +131,23 @@ def plot_utterance_distribution(
     fig.tight_layout()
     fig.savefig(output_dir / "utterance_distribution.png", dpi=150)
     plt.close(fig)
+
+
+def plot_prob_vs_bag_size(
+    bag_sizes: np.ndarray, y_prob: np.ndarray, split_name: str, output_dir: Path
+) -> None:
+    """Plot scatter plot of predicted probabilities vs bag size."""
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(bag_sizes, y_prob, alpha=0.6, edgecolors="w", s=40)
+    ax.set_xlabel("Bag Size (Number of Utterances)")
+    ax.set_ylabel("Predicted Probability")
+    ax.set_title(f"Predicted Probability vs Bag Size — {split_name}")
+    
+    # Add a horizontal line at 0.5 decision threshold
+    ax.axhline(y=0.5, color="r", linestyle="--", alpha=0.5, label="Decision Threshold (0.5)")
+    ax.legend()
+    
+    fig.tight_layout()
+    fig.savefig(output_dir / f"prob_vs_bag_size_{split_name}.png", dpi=150)
+    plt.close(fig)
+
