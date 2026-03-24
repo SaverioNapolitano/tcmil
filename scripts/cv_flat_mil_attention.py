@@ -70,6 +70,7 @@ def make_train_eval_fn(args, device):
         num_neg = len(train_data) - num_pos
         pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float).to(device)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         
         num_training_steps = len(train_loader) * args.max_epochs
