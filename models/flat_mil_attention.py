@@ -14,14 +14,22 @@ class FlatMILAttention(nn.Module):
     applies a learned attention mechanism over the utterances to compute attention weights,
     aggregates them via the attention weights, and finally predicts a binary logit for the bag.
     """
-    def __init__(self, transformer_name: str, proj_dim: int | None = None, att_hidden_dim: int = 128):
+    def __init__(
+        self, 
+        transformer_name: str, 
+        proj_dim: int | None = None, 
+        att_hidden_dim: int = 32,
+        dropout_rate: float = 0.1,
+        temperature: float = 2.0
+    ):
         super().__init__()
+        self.temperature = temperature
         # Utterance encoder
         self.encoder = AutoModel.from_pretrained(transformer_name)
         hidden_size = self.encoder.config.hidden_size
         
         # Instance projection (optional)
-        if proj_dim is not None:
+        if proj_dim is not None and proj_dim > 0:
             self.projector = nn.Sequential(
                 nn.Linear(hidden_size, proj_dim),
                 nn.ReLU()
@@ -33,6 +41,7 @@ class FlatMILAttention(nn.Module):
             
         # Attention MIL pooler
         self.attention_V = nn.Linear(agg_dim, att_hidden_dim)
+        self.attention_dropout = nn.Dropout(dropout_rate)
         self.attention_w = nn.Linear(att_hidden_dim, 1, bias=False)
             
         # Bag classifier
@@ -79,10 +88,11 @@ class FlatMILAttention(nn.Module):
             
             # Compute attention scores: w^T tanh(V * h)
             # a_scores: [Num_Utterances_in_Bag, 1]
-            a_scores = self.attention_w(torch.tanh(self.attention_V(bag)))
+            a_feats = torch.tanh(self.attention_V(bag))
+            a_scores = self.attention_w(self.attention_dropout(a_feats))
             
             # a_weights: [Num_Utterances_in_Bag, 1]
-            a_weights = torch.softmax(a_scores, dim=0)
+            a_weights = torch.softmax(a_scores / self.temperature, dim=0)
             
             # apply attention weights: a_weights^T * bag -> [1, Agg_Dim]
             # using element-wise multiply and sum

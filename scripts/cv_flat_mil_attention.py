@@ -57,30 +57,36 @@ def make_train_eval_fn(args, device):
         
         # Initialize model
         proj_dim = args.proj_dim if args.proj_dim > 0 else None
-        model = FlatMILAttention(args.model_name, proj_dim=proj_dim, att_hidden_dim=args.att_hidden_dim)
+        model = FlatMILAttention(
+            args.model_name, 
+            proj_dim=proj_dim, 
+            att_hidden_dim=args.att_hidden_dim, 
+            dropout_rate=args.dropout_rate,
+            temperature=args.attention_temp
+        )
         model.to(device)
         
         num_pos = sum(1 for iv in train_data if iv["label"] == 1)
         num_neg = len(train_data) - num_pos
         pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float).to(device)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         
         num_training_steps = len(train_loader) * args.max_epochs
         scheduler = get_linear_schedule_with_warmup(
             optimizer, num_warmup_steps=int(0.1 * num_training_steps), num_training_steps=num_training_steps
         )
         
-        best_val_f1 = -1.0
+        best_val_loss = float("inf")
         epochs_no_improve = 0
         best_state = None
         
         for epoch in range(1, args.max_epochs + 1):
-            train_epoch(model, train_loader, criterion, optimizer, scheduler, device)
-            _, val_metrics, _ = evaluate(model, val_loader, criterion, device)
+            train_epoch(model, train_loader, criterion, optimizer, scheduler, device, entropy_lambda=args.entropy_lambda)
+            val_loss, val_metrics, _ = evaluate(model, val_loader, criterion, device)
             
-            if val_metrics["f1"] > best_val_f1:
-                best_val_f1 = val_metrics["f1"]
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 # Save best state in memory to avoid messy file io in parallel/loop
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 epochs_no_improve = 0
@@ -111,8 +117,12 @@ def main():
     parser.add_argument("--data_dir", type=str, default="data", help="Directory containing preprocessed data")
     parser.add_argument("--output_dir", type=str, default="results/cv_flat_mil_attention", help="Output directory")
     parser.add_argument("--model_name", type=str, default="prajjwal1/bert-tiny", help="Pretrained encoder name")
-    parser.add_argument("--proj_dim", type=int, default=128, help="Projection dimension (0 to disable)")
-    parser.add_argument("--att_hidden_dim", type=int, default=128, help="Attention hidden dimension")
+    parser.add_argument("--proj_dim", type=int, default=0, help="Projection dimension (0 to disable)")
+    parser.add_argument("--att_hidden_dim", type=int, default=32, help="Attention hidden dimension")
+    parser.add_argument("--attention_temp", type=float, default=2.0, help="Temperature for attention softmax")
+    parser.add_argument("--dropout_rate", type=float, default=0.2, help="Dropout rate before attention scorer")
+    parser.add_argument("--entropy_lambda", type=float, default=0.01, help="Entropy regularization coefficient")
+    parser.add_argument("--weight_decay", type=float, default=0.05, help="Weight decay for optimizer")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--max_epochs", type=int, default=5, help="Maximum number of epochs per run")
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
