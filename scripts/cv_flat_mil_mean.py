@@ -71,16 +71,16 @@ def make_train_eval_fn(args, device):
             optimizer, num_warmup_steps=int(0.1 * num_training_steps), num_training_steps=num_training_steps
         )
         
-        best_val_f1 = -1.0
+        best_val_loss = float("inf")
         epochs_no_improve = 0
         best_state = None
         
         for epoch in range(1, args.max_epochs + 1):
             train_epoch(model, train_loader, criterion, optimizer, scheduler, device)
-            _, val_metrics, _ = evaluate(model, val_loader, criterion, device)
+            val_loss, val_metrics, _ = evaluate(model, val_loader, criterion, device)
             
-            if val_metrics["f1"] > best_val_f1:
-                best_val_f1 = val_metrics["f1"]
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 # Save best state in memory to avoid messy file io in parallel/loop
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 epochs_no_improve = 0

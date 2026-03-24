@@ -244,7 +244,7 @@ def main():
     )
     
     # --- Training Loop ---
-    best_val_f1 = -1.0
+    best_val_loss = float("inf")
     epochs_no_improve = 0
     history = {"train_loss": [], "val_loss": [], "train_f1": [], "val_f1": [], "val_balanced_accuracy": []}
     
@@ -267,11 +267,11 @@ def main():
         )
         
         # Early stopping and model saving
-        if val_metrics["f1"] > best_val_f1:
-            best_val_f1 = val_metrics["f1"]
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             epochs_no_improve = 0
             torch.save(model.state_dict(), out_dir / "best_model.pt")
-            logger.info("  -> Found new best model: saved!")
+            logger.info("  -> Found new best model (lowest val loss): saved!")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= args.patience:
