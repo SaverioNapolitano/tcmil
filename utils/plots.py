@@ -131,3 +131,68 @@ def plot_utterance_distribution(
     fig.tight_layout()
     fig.savefig(output_dir / "utterance_distribution.png", dpi=150)
     plt.close(fig)
+
+
+def plot_prob_vs_bag_size(
+    bag_sizes: np.ndarray, y_prob: np.ndarray, split_name: str, output_dir: Path
+) -> None:
+    """Plot scatter plot of predicted probabilities vs bag size."""
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(bag_sizes, y_prob, alpha=0.6, edgecolors="w", s=40)
+    ax.set_xlabel("Bag Size (Number of Utterances)")
+    ax.set_ylabel("Predicted Probability")
+    ax.set_title(f"Predicted Probability vs Bag Size — {split_name}")
+    
+    # Add a horizontal line at 0.5 decision threshold
+    ax.axhline(y=0.5, color="r", linestyle="--", alpha=0.5, label="Decision Threshold (0.5)")
+    ax.legend()
+    
+    fig.tight_layout()
+    fig.savefig(output_dir / f"prob_vs_bag_size_{split_name}.png", dpi=150)
+    plt.close(fig)
+
+
+def plot_attention_entropy(
+    entropies: list[float], split_name: str, output_dir: Path
+) -> None:
+    """Plot histogram of attention entropy across interviews."""
+    if not entropies:
+        return
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(entropies, bins=20, color="purple", alpha=0.6, edgecolor="white")
+    ax.set_xlabel("Attention Entropy")
+    ax.set_ylabel("Count")
+    ax.set_title(f"Attention Entropy Distribution — {split_name}")
+    fig.tight_layout()
+    fig.savefig(output_dir / f"attention_entropy_histogram_{split_name}.png", dpi=150)
+    plt.close(fig)
+
+
+def plot_attention_weights_bar(
+    example: dict, output_dir: Path, filename: str
+) -> None:
+    """Plot bar chart of attention weights for a specific interview."""
+    weights = example["attention_weights"]
+    texts = example.get("utterance_texts", [])
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    indices = np.arange(len(weights))
+    
+    ax.bar(indices, weights, color="teal", alpha=0.7)
+    
+    # Optionally add short labels if texts are provided
+    if texts:
+        labels = [t[:20] + "..." if len(t) > 20 else t for t in texts]
+        ax.set_xticks(indices)
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    else:
+        ax.set_xlabel("Utterance Index")
+        
+    ax.set_ylabel("Attention Weight")
+    ax.set_title(
+        f"Attention Weights for Interview {example['interview_id']}\n"
+        f"True: {example['true_label']}, Pred Prob: {example['probability']:.3f}"
+    )
+    fig.tight_layout()
+    fig.savefig(output_dir / filename, dpi=150)
+    plt.close(fig)
