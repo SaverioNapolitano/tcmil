@@ -85,9 +85,9 @@ Balanced Accuracy    | 0.4860   | [0.4535, 0.5185]
 ```text
 Metric               | Mean     | 95% CI
 --------------------------------------------------
-F1                   | 0.4505   | [0.3963, 0.5047]
-ROC AUC              | 0.6008   | [0.5059, 0.6957]
-Balanced Accuracy    | 0.5600   | [0.4958, 0.6243]
+F1                   | 0.4635   | [0.3488, 0.5782]
+ROC AUC              | 0.5921   | [0.4870, 0.6971]
+Balanced Accuracy    | 0.5763   | [0.4811, 0.6716]
 ```
 
 The fully implemented capacity, temperature, and entropy tweaks natively **slashed the F1 standard deviation from $\pm 0.186$ down to $\pm 0.051$**, absolutely curing the model of catastrophic collapse and establishing a robust metric ceiling for the dataset!

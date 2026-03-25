@@ -311,11 +311,7 @@ def main():
             best_val_loss = val_loss
             epochs_no_improve = 0
             torch.save(model.state_dict(), out_dir / "best_model.pt")
-<<<<<<< HEAD:scripts/train_flat_mil_mean.py
             logger.info("  -> Found new best model (lowest val loss): saved!")
-=======
-            logger.info("  -> Found new best model (lowest loss): saved!")
->>>>>>> features/flat-mil-attention-pooling:scripts/train_flat_mil_attention.py
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= args.patience:

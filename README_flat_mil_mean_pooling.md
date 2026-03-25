@@ -63,15 +63,15 @@ The model evaluates robustly across **3 randomized splits with 2 seeds each (6 r
 ```text
 Metric               | Mean     | Std      | 95% CI
 -----------------------------------------------------------------
-accuracy             | 0.4324   | 0.1233   | [0.3031, 0.5618]
-balanced_accuracy    | 0.5393   | 0.0311   | [0.5067, 0.5720]
-precision            | 0.3263   | 0.0255   | [0.2995, 0.3531]
-recall               | 0.8030   | 0.2183   | [0.5739, 1.0321]
-f1                   | 0.4530   | 0.0277   | [0.4240, 0.4821]
-roc_auc              | 0.5962   | 0.0389   | [0.5553, 0.6370]
-pr_auc               | 0.3735   | 0.0316   | [0.3404, 0.4067]
+accuracy             | 0.4279   | 0.1165   | [0.3057, 0.5501]
+balanced_accuracy    | 0.5318   | 0.0323   | [0.4979, 0.5656]
+precision            | 0.3180   | 0.0212   | [0.2958, 0.3403]
+recall               | 0.7879   | 0.2484   | [0.5272, 1.0486]
+f1                   | 0.4419   | 0.0541   | [0.3852, 0.4986]
+roc_auc              | 0.5956   | 0.0402   | [0.5534, 0.6377]
+pr_auc               | 0.3728   | 0.0328   | [0.3384, 0.4072]
 ```
-These results confirm a massive improvement over the unweighted baseline. The discrete classifications (F1) went from `0.0` straight to **`0.4530`**, and the ROC AUC lifted to **`0.5962`**. The high recall (`0.803`) paired with the precision (`0.326`) suggests the model's new tuned threshold behaves correctly in correctly identifying positive targets at the expense of a lower raw accuracy.
+These results confirm a massive improvement over the unweighted baseline. The discrete classifications (F1) went from `0.0` straight to **`0.4419`**, and the ROC AUC lifted to **`0.5956`**. The high recall (`0.7879`) paired with the precision (`0.3180`) suggests the model's new tuned threshold behaves correctly in correctly identifying positive targets at the expense of a lower raw accuracy.
 
 ## Strengths and Limitations vs Dialogue Mean
 

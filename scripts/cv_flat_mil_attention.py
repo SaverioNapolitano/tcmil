@@ -83,11 +83,7 @@ def make_train_eval_fn(args, device):
         best_state = None
         
         for epoch in range(1, args.max_epochs + 1):
-<<<<<<< HEAD:scripts/cv_flat_mil_mean.py
-            train_epoch(model, train_loader, criterion, optimizer, scheduler, device)
-=======
             train_epoch(model, train_loader, criterion, optimizer, scheduler, device, entropy_lambda=args.entropy_lambda)
->>>>>>> features/flat-mil-attention-pooling:scripts/cv_flat_mil_attention.py
             val_loss, val_metrics, _ = evaluate(model, val_loader, criterion, device)
             
             if val_loss < best_val_loss:
