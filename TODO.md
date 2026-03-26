@@ -1,2 +1,0 @@
-- [ ] Explore batch sizes > 1 
-- [ ] Explore other encoders than distilBERT (RoBERTa)
