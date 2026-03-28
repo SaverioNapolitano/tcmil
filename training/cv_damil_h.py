@@ -52,7 +52,7 @@ def main():
     parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--proj_dim", type=int, default=0)
     parser.add_argument("--att_hidden_dim", type=int, default=64)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=50)
     parser.add_argument("--encoder_lr", type=float, default=2e-5)
     parser.add_argument("--head_lr", type=float, default=1e-4)
@@ -129,10 +129,18 @@ def main():
         test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
         
         # Model
-        # In frozen mode, we use the same base_encoder but it's set to None in model for efficiency
-        # In fine-tuning mode, we need it.
+        # CRITICAL: We MUST reload/reset the encoder for each fold if fine-tuning
+        # to prevent leakage of trained weights across folds.
+        if is_fine_tuning:
+            logger.info(f" [Split {run_seed}] Reloading fresh {args.encoder_name} to prevent leakage...")
+            current_encoder = AutoModel.from_pretrained(args.encoder_name).to(device)
+            # Optional: checksum check to verify it's fresh? 
+            # We'll trust from_pretrained for now.
+        else:
+            current_encoder = None # EmbeddedBagDataset doesn't need it
+
         model = DAMILHClassifier(
-            encoder=base_encoder if is_fine_tuning else None,
+            encoder=current_encoder,
             embedding_dim=embedding_dim,
             proj_dim=args.proj_dim,
             att_hidden_dim=args.att_hidden_dim,
@@ -159,9 +167,11 @@ def main():
         checkpoint_path = out_dir / f"temp_best_{run_seed}.pt"
         
         for epoch in range(1, args.max_epochs + 1):
-            train_epoch(model, train_loader, criterion, optimizer, device, entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm, is_tokenized=is_fine_tuning)
+            tr_loss, tr_metrics = train_epoch(model, train_loader, criterion, optimizer, device, entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm, is_tokenized=is_fine_tuning)
             v_loss, v_metrics, _ = evaluate(model, val_loader, criterion, device, is_tokenized=is_fine_tuning)
             
+            logger.info(f"   [Epoch {epoch:02d}] Loss: {tr_loss:.4f}/{v_loss:.4f} | PR-AUC: {v_metrics['pr_auc']:.4f} | ROC-AUC: {v_metrics['roc_auc']:.4f}")
+
             score = v_metrics[args.checkpoint_metric] if args.checkpoint_metric != "val_loss" else v_loss
             is_best = (score > best_score) if args.checkpoint_metric != "val_loss" else (score < best_score)
             

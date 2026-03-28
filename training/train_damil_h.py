@@ -230,6 +230,10 @@ def train_epoch(model, loader, criterion, optimizer, device, entropy_lambda=0.0,
 
     avg_loss = total_loss / len(loader)
     metrics = compute_metrics(np.array(all_labels), (np.array(all_probs) >= 0.5).astype(int), np.array(all_probs))
+    
+    # Add a console print for progress if not using tqdm elsewhere
+    # print(f"  [Train] Loss: {avg_loss:.4f}, PR-AUC: {metrics['pr_auc']:.4f}")
+    
     return avg_loss, metrics
 
 
@@ -286,6 +290,35 @@ def evaluate(model, loader, criterion, device, threshold=0.5, is_tokenized=False
     }
     
     return avg_loss, metrics, raw_preds
+
+
+def generate_attention_report(test_results: dict, output_path: Path, n_top: int = 5, n_examples: int = 10):
+    """Generate a markdown report of top-attended utterances for several examples."""
+    with open(output_path, "w") as f:
+        f.write("# DAMIL-H Attention Behavior Report\n\n")
+        f.write("This report shows the top-attended utterances for the first few examples in the test set.\n\n")
+        
+        for i in range(min(n_examples, len(test_results["interview_id"]))):
+            sample_id = test_results["interview_id"][i]
+            label = "Depressed" if test_results["true_label"][i] == 1 else "Not Depressed"
+            prob = test_results["probability"][i]
+            weights = test_results["attention"][i]
+            utts = test_results["utterances"][i]
+            
+            f.write(f"## Interview {sample_id} ({label}, Pred Prob: {prob:.4f})\n")
+            
+            if utts is None:
+                f.write("Utterances not available.\n\n")
+                continue
+                
+            # Get top N indices
+            top_indices = np.argsort(weights)[::-1][:n_top]
+            
+            f.write("| Attention | Utterance |\n")
+            f.write("| :--- | :--- |\n")
+            for idx in top_indices:
+                f.write(f"| {weights[idx]:.4f} | {utts[idx]} |\n")
+            f.write("\n")
 
 
 def main():
@@ -448,6 +481,10 @@ def main():
             "utterance_texts": test_results["utterances"][i] if test_results["utterances"] else None
         }
         plot_attention_weights_bar(example, out_dir, f"attention_bar_{sample_id}.png")
+
+    # Qualitative Report
+    logger.info("Generating qualitative attention report...")
+    generate_attention_report(test_results, out_dir / "attention_report.md")
 
     logger.info("Done!")
 
