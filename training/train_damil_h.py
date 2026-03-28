@@ -480,14 +480,15 @@ def main():
     model.load_state_dict(torch.load(out_dir / "best_model.pt", weights_only=True))
 
     # Tune threshold on dev
-    logger.info("Evaluating on DEV split to tune threshold...")
+    logger.info("Evaluating on DEV split to tune threshold based on weighted loss...")
     _, _, dev_preds_default = evaluate(model, dev_loader, criterion, device, threshold=0.5)
     best_t = find_best_threshold(
         y_true=np.array(dev_preds_default["true_label"]),
         y_prob=np.array(dev_preds_default["probability"]),
-        metric="f1",
+        metric="loss",
+        pos_weight=pos_weight.item(),
     )
-    logger.info(f"Best tuned threshold on DEV: {best_t:.4f}")
+    logger.info(f"Best tuned threshold on DEV (min weighted loss): {best_t:.4f}")
 
     # Re-evaluate with tuned threshold
     _, dev_metrics, dev_preds = evaluate(model, dev_loader, criterion, device, threshold=best_t)

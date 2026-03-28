@@ -56,36 +56,50 @@ def confusion_matrix_dict(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 
 
 def find_best_threshold(
-    y_true: np.ndarray, y_prob: np.ndarray, metric: str = "f1"
+    y_true: np.ndarray, y_prob: np.ndarray, metric: str = "f1", pos_weight: float = 1.0
 ) -> float:
     """Find the threshold in [0.01, 0.99] that maximizes the given metric.
-    
+
     Args:
         y_true: Ground truth binary labels.
         y_prob: Predicted probabilities.
-        metric: Either 'f1' or 'balanced_accuracy'.
-        
+        metric: Either 'f1', 'balanced_accuracy', or 'loss'.
+        pos_weight: Weight for the positive class (used only if metric='loss').
+
     Returns:
         Best threshold value.
     """
     best_t = 0.5
-    best_score = -1.0
-    
+    if metric == "loss":
+        best_score = float("inf")
+    else:
+        best_score = -1.0
+
     thresholds = np.linspace(0.01, 0.99, 99)
     for t in thresholds:
         preds = (y_prob >= t).astype(int)
-        
+
         if metric == "f1":
             score = f1_score(y_true, preds, zero_division=0)
         elif metric == "balanced_accuracy":
             score = balanced_accuracy_score(y_true, preds)
+        elif metric == "loss":
+            # Weighted binary zero-one loss: pos_weight * FN + FP
+            fn = np.sum((y_true == 1) & (preds == 0))
+            fp = np.sum((y_true == 0) & (preds == 1))
+            score = pos_weight * fn + fp
         else:
             raise ValueError(f"Unknown tuning metric {metric}")
-            
-        if score > best_score:
-            best_score = score
-            best_t = t
-            
+
+        if metric == "loss":
+            if score < best_score:
+                best_score = score
+                best_t = t
+        else:
+            if score > best_score:
+                best_score = score
+                best_t = t
+
     return float(best_t)
 
 
