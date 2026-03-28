@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -57,576 +58,398 @@ def set_seed(seed: int):
 
 
 # ---------------------------------------------------------------------------
-# Embedding extraction (frozen encoder)
+# Embedding extraction and Datasets
 # ---------------------------------------------------------------------------
 
 ENCODER_NAME = "distilbert-base-uncased"
-MAX_TOKEN_LENGTH = 64
+MAX_TOKEN_LENGTH = 128  # Default increased to 128
+ATT_HIDDEN_DIM = 64
 ENCODING_BATCH_SIZE = 64
 
-
-@torch.no_grad()
-def encode_utterances(
-    utterances: list[str],
-    tokenizer,
-    encoder,
-    device: torch.device,
-    max_length: int = MAX_TOKEN_LENGTH,
-    batch_size: int = ENCODING_BATCH_SIZE,
-) -> torch.Tensor:
-    """Encode a list of utterances into [CLS] embeddings with a frozen encoder.
-
-    Args:
-        utterances: Raw text strings.
-        tokenizer: HuggingFace tokenizer.
-        encoder: Pretrained transformer model (frozen).
-        device: Torch device.
-        max_length: Maximum token length per utterance.
-        batch_size: Encoding batch size.
-
-    Returns:
-        Tensor of shape (num_utterances, hidden_size).
-    """
-    encoder.eval()
-    all_embeddings = []
-
-    for start in range(0, len(utterances), batch_size):
-        batch_texts = utterances[start : start + batch_size]
-        encoded = tokenizer(
-            batch_texts,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        input_ids = encoded["input_ids"].to(device)
-        attention_mask = encoded["attention_mask"].to(device)
-
-        outputs = encoder(input_ids=input_ids, attention_mask=attention_mask)
-        # [CLS] token embedding
-        cls_embeddings = outputs.last_hidden_state[:, 0, :]
-        all_embeddings.append(cls_embeddings.cpu())
-
-    return torch.cat(all_embeddings, dim=0)
-
-
-def precompute_embeddings(
-    interviews: list[dict],
-    tokenizer,
-    encoder,
-    device: torch.device,
-) -> list[dict]:
-    """Pre-compute embeddings for all interviews.
-
-    Args:
-        interviews: List of interview dicts with 'utterances' key.
-        tokenizer: HuggingFace tokenizer.
-        encoder: Frozen pretrained encoder.
-        device: Torch device.
-
-    Returns:
-        List of dicts with added 'embeddings' key (Tensor of shape [N, hidden_size]).
-    """
-    enriched = []
-    for iv in interviews:
-        utts = iv["utterances"] if iv["utterances"] else [""]
-        emb = encode_utterances(utts, tokenizer, encoder, device)
-        enriched.append({**iv, "embeddings": emb})
-    return enriched
-
-
-# ---------------------------------------------------------------------------
-# Dataset and collation
-# ---------------------------------------------------------------------------
-
 class EmbeddedBagDataset(Dataset):
-    """Dataset wrapping pre-computed utterance embeddings per interview."""
-
+    """Dataset for pre-computed utterance embeddings."""
     def __init__(self, interviews: list[dict]):
         self.interviews = interviews
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self.interviews)
 
-    def __getitem__(self, idx: int) -> dict:
-        return self.interviews[idx]
+    def __getitem__(self, idx):
+        item = self.interviews[idx]
+        return {
+            "bag": item["embeddings"],  # (num_turns, embedding_dim)
+            "label": torch.tensor(item["label"], dtype=torch.float),
+            "interview_id": item["interview_id"],
+        }
 
-
-def collate_embedded_bags(batch: list[dict]) -> dict:
-    """Collate pre-computed embeddings into a padded batch.
-
-    Returns:
-        Dictionary with keys:
-            interview_ids: list[int]
-            labels: Tensor (batch_size,)
-            bags: Tensor (batch_size, max_turns, embedding_dim) — zero-padded
-            bag_sizes: list[int]
-            utterances_lists: list[list[str]]
-    """
-    interview_ids = []
-    labels = []
-    embeddings_list = []
-    bag_sizes = []
-    utterances_lists = []
-
-    for item in batch:
-        interview_ids.append(item["interview_id"])
-        labels.append(item["label"])
-        embeddings_list.append(item["embeddings"])
-        bag_sizes.append(item["embeddings"].size(0))
-        utts = item["utterances"] if item["utterances"] else [""]
-        utterances_lists.append(utts)
-
-    # Pad to max bag size in this batch
+def collate_embedded_bags(batch):
+    bags = [item["bag"] for item in batch]
+    labels = torch.stack([item["label"] for item in batch])
+    ids = [item["interview_id"] for item in batch]
+    
+    bag_sizes = [bag.size(0) for bag in bags]
     max_turns = max(bag_sizes)
-    embedding_dim = embeddings_list[0].size(1)
-    padded = torch.zeros(len(batch), max_turns, embedding_dim)
-    for i, emb in enumerate(embeddings_list):
-        padded[i, : emb.size(0), :] = emb
-
+    embedding_dim = bags[0].size(1)
+    
+    padded_bags = torch.zeros(len(batch), max_turns, embedding_dim)
+    for i, bag in enumerate(bags):
+        padded_bags[i, :bag_sizes[i], :] = bag
+        
     return {
-        "interview_ids": interview_ids,
-        "labels": torch.tensor(labels, dtype=torch.float),
-        "bags": padded,
+        "bags": padded_bags,
         "bag_sizes": bag_sizes,
-        "utterances_lists": utterances_lists,
+        "labels": labels,
+        "interview_ids": ids,
     }
 
+class TokenizedBagDataset(Dataset):
+    """Dataset for on-the-fly tokenization (required for fine-tuning)."""
+    def __init__(self, interviews: list[dict], tokenizer, max_len: int):
+        self.interviews = interviews
+        self.tokenizer = tokenizer
+        self.max_len = max_len
+
+    def __len__(self):
+        return len(self.interviews)
+
+    def __getitem__(self, idx):
+        item = self.interviews[idx]
+        utterances = item["utterances"] if item["utterances"] else [""]
+        
+        encoded = self.tokenizer(
+            utterances,
+            padding="max_length",
+            truncation=True,
+            max_length=self.max_len,
+            return_tensors="pt"
+        )
+        
+        return {
+            "input_ids": encoded["input_ids"],  # (num_turns, max_len)
+            "attention_mask": encoded["attention_mask"],
+            "label": torch.tensor(item["label"], dtype=torch.float),
+            "interview_id": item["interview_id"],
+            "utterances": utterances,
+        }
+
+def collate_tokenized_bags(batch):
+    input_ids_list = [item["input_ids"] for item in batch]
+    attr_mask_list = [item["attention_mask"] for item in batch]
+    labels = torch.stack([item["label"] for item in batch])
+    ids = [item["interview_id"] for item in batch]
+    utts = [item["utterances"] for item in batch]
+    
+    bag_sizes = [ids_bag.size(0) for ids_bag in input_ids_list]
+    max_turns = max(bag_sizes)
+    max_len = input_ids_list[0].size(1)
+    
+    padded_ids = torch.zeros(len(batch), max_turns, max_len, dtype=torch.long)
+    padded_masks = torch.zeros(len(batch), max_turns, max_len, dtype=torch.long)
+    
+    for i in range(len(batch)):
+        padded_ids[i, :bag_sizes[i], :] = input_ids_list[i]
+        padded_masks[i, :bag_sizes[i], :] = attr_mask_list[i]
+        
+    return {
+        "bags": padded_ids,
+        "attention_masks": padded_masks,
+        "bag_sizes": bag_sizes,
+        "labels": labels,
+        "interview_ids": ids,
+        "utterances_lists": utts,
+    }
+
+@torch.no_grad()
+def precompute_embeddings(interviews, tokenizer, encoder, device, max_len=MAX_TOKEN_LENGTH):
+    encoder.eval()
+    processed = []
+    
+    for iv in tqdm(interviews, desc="Pre-computing embeddings"):
+        utts = iv.get("utterances", [""])
+        if not utts:
+            utts = [""]
+        
+        encoded = tokenizer(
+            utts,
+            padding=True,
+            truncation=True,
+            max_length=max_len,
+            return_tensors="pt"
+        ).to(device)
+        
+        outputs = encoder(**encoded)
+        embeddings = outputs.last_hidden_state[:, 0, :].cpu()
+        
+        processed.append({**iv, "embeddings": embeddings})
+            
+    return processed
 
 # ---------------------------------------------------------------------------
 # Training and evaluation loops
 # ---------------------------------------------------------------------------
 
-def train_epoch(
-    model: DAMILHClassifier,
-    dataloader: DataLoader,
-    criterion: nn.Module,
-    optimizer: torch.optim.Optimizer,
-    device: torch.device,
-    entropy_lambda: float = 0.0,
-) -> tuple[float, float]:
-    """Train for one epoch.
-
-    Returns:
-        (average_loss, f1_score)
-    """
-    from sklearn.metrics import f1_score
-
+def train_epoch(model, loader, criterion, optimizer, device, entropy_lambda=0.0, max_grad_norm=1.0, is_tokenized=False):
     model.train()
-    total_loss = 0.0
-    all_preds = []
+    total_loss = 0
+    all_probs = []
     all_labels = []
 
-    for batch in dataloader:
-        bags = batch["bags"].to(device)
-        labels = batch["labels"].to(device)
-        bag_sizes = batch["bag_sizes"]
-
+    for batch in loader:
         optimizer.zero_grad()
-        logits, att_weights_list = model.forward_batch(bags, bag_sizes)
-        loss = criterion(logits, labels)
+        target = batch["labels"].to(device)
+        bag_sizes = batch["bag_sizes"]
+        
+        if is_tokenized:
+            bags = batch["bags"].to(device)
+            attn_masks = batch["attention_masks"].to(device)
+            logits, att_weights_list = model.forward_batch(
+                bags, bag_sizes, is_tokenized=True, attention_masks=attn_masks
+            )
+        else:
+            bags = batch["bags"].to(device)
+            logits, att_weights_list = model.forward_batch(bags, bag_sizes)
 
-        if entropy_lambda > 0.0:
-            entropies = []
-            for aw in att_weights_list:
-                entropies.append(-torch.sum(aw * torch.log(aw + 1e-9)))
-            mean_entropy = torch.stack(entropies).mean()
-            loss = loss - entropy_lambda * mean_entropy
+        loss = criterion(logits, target)
+
+        if entropy_lambda > 0:
+            entropy = 0
+            for attW in att_weights_list:
+                entropy -= torch.sum(attW * torch.log(attW + 1e-9))
+            loss = loss - entropy_lambda * (entropy / len(att_weights_list))
 
         loss.backward()
+        
+        if max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            
         optimizer.step()
 
         total_loss += loss.item()
-        probs = torch.sigmoid(logits).detach().cpu().numpy()
-        preds = (probs >= 0.5).astype(int)
+        all_probs.extend(torch.sigmoid(logits).detach().cpu().numpy())
+        all_labels.extend(target.cpu().numpy())
 
-        all_preds.extend(preds)
-        all_labels.extend(labels.cpu().numpy())
-
-    avg_loss = total_loss / len(dataloader)
-    f1 = f1_score(all_labels, all_preds, zero_division=0)
-    return avg_loss, f1
+    avg_loss = total_loss / len(loader)
+    metrics = compute_metrics(np.array(all_labels), (np.array(all_probs) >= 0.5).astype(int), np.array(all_probs))
+    return avg_loss, metrics
 
 
-@torch.no_grad()
-def evaluate(
-    model: DAMILHClassifier,
-    dataloader: DataLoader,
-    criterion: nn.Module,
-    device: torch.device,
-    threshold: float = 0.5,
-) -> tuple[float, dict, dict]:
-    """Evaluate the model and return loss, metrics, and detailed predictions.
-
-    Returns:
-        (avg_loss, metrics_dict, predictions_dict)
-    """
+def evaluate(model, loader, criterion, device, threshold=0.5, is_tokenized=False):
     model.eval()
-    total_loss = 0.0
-
-    all_ids = []
-    all_labels = []
+    total_loss = 0
     all_probs = []
-    all_preds = []
-    all_bag_sizes = []
-    all_attention_weights = []
-    all_entropies = []
-    all_utterance_texts = []
+    all_labels = []
+    all_ids = []
+    all_att_weights = []
+    all_utterances = []
 
-    for batch in dataloader:
-        bags = batch["bags"].to(device)
-        labels = batch["labels"].to(device)
-        bag_sizes = batch["bag_sizes"]
-        utterances_lists = batch["utterances_lists"]
+    with torch.no_grad():
+        for batch in loader:
+            target = batch["labels"].to(device)
+            bag_sizes = batch["bag_sizes"]
+            
+            if is_tokenized:
+                bags = batch["bags"].to(device)
+                attn_masks = batch["attention_masks"].to(device)
+                logits, att_weights_list = model.forward_batch(
+                    bags, bag_sizes, is_tokenized=True, attention_masks=attn_masks
+                )
+                all_utterances.extend(batch["utterances_lists"])
+            else:
+                bags = batch["bags"].to(device)
+                logits, att_weights_list = model.forward_batch(bags, bag_sizes)
+                # In non-tokenized mode, the batch doesn't strictly need utterances unless we plot
+                if "utterances_lists" in batch:
+                    all_utterances.extend(batch["utterances_lists"])
 
-        logits, att_weights_list = model.forward_batch(bags, bag_sizes)
-        loss = criterion(logits, labels)
-        total_loss += loss.item()
+            loss = criterion(logits, target)
+            total_loss += loss.item()
+            
+            probs = torch.sigmoid(logits).cpu().numpy()
+            all_probs.extend(probs)
+            all_labels.extend(target.cpu().numpy())
+            all_ids.extend(batch["interview_ids"])
+            all_att_weights.extend([w.cpu().numpy() for w in att_weights_list])
 
-        probs = torch.sigmoid(logits).cpu().numpy()
-        preds = (probs >= threshold).astype(int)
-
-        all_ids.extend(batch["interview_ids"])
-        all_labels.extend(batch["labels"].numpy())
-        all_probs.extend(probs)
-        all_preds.extend(preds)
-        all_bag_sizes.extend(bag_sizes)
-        all_utterance_texts.extend(utterances_lists)
-
-        for aw in att_weights_list:
-            aw_np = aw.cpu().numpy()
-            all_attention_weights.append(aw_np)
-            all_entropies.append(compute_attention_entropy(aw_np))
-
-    avg_loss = total_loss / len(dataloader)
-
-    metrics = compute_metrics(
-        y_true=np.array(all_labels),
-        y_pred=np.array(all_preds),
-        y_prob=np.array(all_probs),
-    )
-
-    predictions = {
+    avg_loss = total_loss / len(loader)
+    y_true = np.array(all_labels)
+    y_prob = np.array(all_probs)
+    y_pred = (y_prob >= threshold).astype(int)
+    
+    metrics = compute_metrics(y_true, y_pred, y_prob)
+    
+    raw_preds = {
         "interview_id": all_ids,
-        "true_label": [int(l) for l in all_labels],
-        "predicted_label": all_preds,
+        "true_label": all_labels,
         "probability": all_probs,
-        "num_utterances": all_bag_sizes,
-        "attention_weights": all_attention_weights,
-        "attention_entropy": all_entropies,
-        "utterance_texts": all_utterance_texts,
+        "attention": all_att_weights,
+        "utterances": all_utterances if all_utterances else None
     }
+    
+    return avg_loss, metrics, raw_preds
 
-    return avg_loss, metrics, predictions
-
-
-# ---------------------------------------------------------------------------
-# Main training pipeline
-# ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Train DAMIL-H (Hierarchical Dual Attention MIL)")
+    parser = argparse.ArgumentParser(description="Train DAMIL-H for Depression Detection")
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument("--output_dir", type=str, default="results/damil_h")
+    
+    # Model Config
     parser.add_argument("--encoder_name", type=str, default=ENCODER_NAME)
     parser.add_argument("--max_len", type=int, default=MAX_TOKEN_LENGTH)
-    parser.add_argument("--proj_dim", type=int, default=0, help="Projection dim (0 to disable)")
-    parser.add_argument("--att_hidden_dim", type=int, default=32)
+    parser.add_argument("--proj_dim", type=int, default=0)
+    parser.add_argument("--att_hidden_dim", type=int, default=64)
     parser.add_argument("--attention_temp", type=float, default=1.0)
+    
+    # Training Config
+    parser.add_argument("--unfreeze_top_layers", type=int, default=0)
     parser.add_argument("--dropout_rate", type=float, default=0.1)
-    parser.add_argument("--entropy_lambda", type=float, default=0.01)
+    parser.add_argument("--entropy_lambda", type=float, default=0.0)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--max_epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--encoder_lr", type=float, default=2e-5)
+    parser.add_argument("--head_lr", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--max_grad_norm", type=float, default=1.0)
+    parser.add_argument("--checkpoint_metric", type=str, default="pr_auc", choices=["val_loss", "f1", "roc_auc", "pr_auc", "balanced_accuracy"])
+    
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
-
-    # --- Setup ---
     set_seed(args.seed)
+
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(message)s",
         level=logging.INFO,
-        handlers=[
-            logging.FileHandler(out_dir / "train.log"),
-            logging.StreamHandler(),
-        ],
+        handlers=[logging.FileHandler(out_dir / "train.log"), logging.StreamHandler()],
     )
     logger = logging.getLogger(__name__)
     logger.info(f"Arguments: {args}")
 
-    device = torch.device(
-        "cuda" if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available()
-        else "cpu"
-    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
     # --- Data Loading ---
     logger.info("Loading interviews...")
-    train_data = load_interviews(args.data_dir, "train")
-    dev_data = load_interviews(args.data_dir, "dev")
+    train_ivs = load_interviews(args.data_dir, split="train")
+    dev_ivs = load_interviews(args.data_dir, split="dev")
+    test_ivs = load_interviews(args.data_dir, split="test")
 
-    print_split_stats(train_data, "train")
-    print_split_stats(dev_data, "dev")
-
-    # --- Pre-compute embeddings ---
-    logger.info(f"Pre-computing embeddings with frozen {args.encoder_name}...")
+    is_fine_tuning = (args.unfreeze_top_layers > 0)
     tokenizer = AutoTokenizer.from_pretrained(args.encoder_name)
-    encoder = AutoModel.from_pretrained(args.encoder_name).to(device)
-    encoder.eval()
-    for p in encoder.parameters():
-        p.requires_grad = False
-
-    train_data = precompute_embeddings(train_data, tokenizer, encoder, device)
-    dev_data = precompute_embeddings(dev_data, tokenizer, encoder, device)
-
-    embedding_dim = train_data[0]["embeddings"].size(1)
-    logger.info(f"Embedding dimension: {embedding_dim}")
-
-    # Free encoder memory
-    del encoder
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
-
-    # --- Dataloaders ---
-    train_loader = DataLoader(
-        EmbeddedBagDataset(train_data),
-        batch_size=args.batch_size,
-        shuffle=True,
-        collate_fn=collate_embedded_bags,
-    )
-    dev_loader = DataLoader(
-        EmbeddedBagDataset(dev_data),
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=collate_embedded_bags,
-    )
-
-    # --- Model Setup ---
-    proj_dim = args.proj_dim if args.proj_dim > 0 else None
+    base_encoder = AutoModel.from_pretrained(args.encoder_name).to(device)
+    embedding_dim = base_encoder.config.hidden_size
+    
     model = DAMILHClassifier(
+        encoder=base_encoder,
         embedding_dim=embedding_dim,
-        proj_dim=proj_dim,
+        proj_dim=args.proj_dim,
         att_hidden_dim=args.att_hidden_dim,
         dropout_rate=args.dropout_rate,
         temperature=args.attention_temp,
-    )
-    model.to(device)
-    logger.info(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    ).to(device)
+    
+    if is_fine_tuning:
+        logger.info(f"Unfreezing top {args.unfreeze_top_layers} layers of the encoder...")
+        model.unfreeze_top_n_layers(args.unfreeze_top_layers)
+        train_dataset = TokenizedBagDataset(train_ivs, tokenizer, args.max_len)
+        dev_dataset = TokenizedBagDataset(dev_ivs, tokenizer, args.max_len)
+        test_dataset = TokenizedBagDataset(test_ivs, tokenizer, args.max_len)
+        collate_fn = collate_tokenized_bags
+    else:
+        logger.info(f"Encoder is frozen. Pre-computing embeddings...")
+        train_ivs_emb = precompute_embeddings(train_ivs, tokenizer, base_encoder, device, max_len=args.max_len)
+        dev_ivs_emb = precompute_embeddings(dev_ivs, tokenizer, base_encoder, device, max_len=args.max_len)
+        test_ivs_emb = precompute_embeddings(test_ivs, tokenizer, base_encoder, device, max_len=args.max_len)
+        model.encoder = None
+        train_dataset = EmbeddedBagDataset(train_ivs_emb)
+        dev_dataset = EmbeddedBagDataset(dev_ivs_emb)
+        test_dataset = EmbeddedBagDataset(test_ivs_emb)
+        collate_fn = collate_embedded_bags
 
-    num_pos = sum(1 for iv in train_data if iv["label"] == 1)
-    num_neg = len(train_data) - num_pos
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+    dev_loader = DataLoader(dev_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+
+    # Optimizer groups
+    encoder_params = [p for n, p in model.named_parameters() if "encoder" in n and p.requires_grad]
+    head_params = [p for n, p in model.named_parameters() if "encoder" not in n and p.requires_grad]
+    param_groups = [{"params": encoder_params, "lr": args.encoder_lr}, {"params": head_params, "lr": args.head_lr}]
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=args.weight_decay)
+    
+    logger.info(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+    
+    num_pos = sum(1 for iv in train_ivs if iv["label"] == 1)
+    num_neg = len(train_ivs) - num_pos
     pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    logger.info(f"Class balance: {num_pos} pos / {num_neg} neg — pos_weight={pos_weight.item():.2f}")
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     # --- Training Loop ---
-    best_val_loss = float("inf")
-    epochs_no_improve = 0
-    history = {
-        "train_loss": [], "val_loss": [],
-        "train_f1": [], "val_f1": [],
-        "val_balanced_accuracy": [],
-    }
-
     logger.info("Starting training...")
+    history = {"train_loss": [], "val_loss": [], "val_f1": [], "val_bacc": [], "val_roc_auc": [], "val_pr_auc": []}
+    best_score = -float("inf") if args.checkpoint_metric != "val_loss" else float("inf")
+    epochs_no_improve = 0
+    best_model_path = out_dir / "best_model.pt"
+
     for epoch in range(1, args.max_epochs + 1):
-        train_loss, train_f1 = train_epoch(
-            model, train_loader, criterion, optimizer, device,
-            entropy_lambda=args.entropy_lambda,
-        )
-        val_loss, val_metrics, _ = evaluate(model, dev_loader, criterion, device)
+        tr_loss, tr_metrics = train_epoch(model, train_loader, criterion, optimizer, device, entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm, is_tokenized=is_fine_tuning)
+        v_loss, v_metrics, _ = evaluate(model, dev_loader, criterion, device, is_tokenized=is_fine_tuning)
 
-        history["train_loss"].append(train_loss)
-        history["train_f1"].append(train_f1)
-        history["val_loss"].append(val_loss)
-        history["val_f1"].append(val_metrics["f1"])
-        history["val_balanced_accuracy"].append(val_metrics["balanced_accuracy"])
+        history["train_loss"].append(tr_loss)
+        history["val_loss"].append(v_loss)
+        history["val_f1"].append(v_metrics["f1"])
+        history["val_bacc"].append(v_metrics["balanced_accuracy"])
+        history["val_roc_auc"].append(v_metrics["roc_auc"])
+        history["val_pr_auc"].append(v_metrics["pr_auc"])
 
-        logger.info(
-            f"Epoch {epoch:02d} | "
-            f"Train Loss: {train_loss:.4f} | Train F1: {train_f1:.4f} | "
-            f"Val Loss: {val_loss:.4f} | Val F1: {val_metrics['f1']:.4f} | "
-            f"Val BAcc: {val_metrics['balanced_accuracy']:.4f}"
-        )
+        logger.info(f"Epoch {epoch:02d} | Loss: {tr_loss:.4f}/{v_loss:.4f} | PR-AUC: {v_metrics['pr_auc']:.4f} | ROC-AUC: {v_metrics['roc_auc']:.4f}")
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        score = v_metrics[args.checkpoint_metric] if args.checkpoint_metric != "val_loss" else v_loss
+        is_best = (score > best_score) if args.checkpoint_metric != "val_loss" else (score < best_score)
+        if is_best:
+            best_score = score
             epochs_no_improve = 0
-            torch.save(model.state_dict(), out_dir / "best_model.pt")
-            logger.info("  -> Found new best model (lowest val loss): saved!")
+            torch.save(model.state_dict(), best_model_path)
+            logger.info(f"  -> Best model saved ({args.checkpoint_metric}: {score:.4f})")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= args.patience:
-                logger.info(
-                    f"Early stopping triggered after {epochs_no_improve} epochs "
-                    f"without improvement."
-                )
+                logger.info("Early stopping.")
                 break
 
-    # Save training history
-    pd.DataFrame(history).to_csv(out_dir / "train_history.csv", index=False)
+    # Final Eval
+    if is_fine_tuning: model.encoder = base_encoder
+    model.load_state_dict(torch.load(best_model_path, weights_only=True))
+    
+    _, _, v_preds = evaluate(model, dev_loader, criterion, device, threshold=0.5, is_tokenized=is_fine_tuning)
+    best_t = find_best_threshold(np.array(v_preds["true_label"]), np.array(v_preds["probability"]), metric="loss", pos_weight=pos_weight.item())
+    logger.info(f"Best threshold: {best_t:.4f}")
+
+    _, test_metrics, test_results = evaluate(model, test_loader, criterion, device, threshold=best_t, is_tokenized=is_fine_tuning)
+    with open(out_dir / "metrics.json", "w") as f: json.dump({"test": test_metrics, "threshold": best_t}, f, indent=4)
+    
+    # --- Plotting ---
+    logger.info("Generating evaluation plots...")
     plot_loss_curves(history["train_loss"], history["val_loss"], out_dir)
     plot_metric_curves(history, ["f1", "balanced_accuracy"], out_dir)
-
-    # --- Final Evaluation ---
-    logger.info("Loading best model for final evaluation...")
-    model.load_state_dict(torch.load(out_dir / "best_model.pt", weights_only=True))
-
-    # Tune threshold on dev
-    logger.info("Evaluating on DEV split to tune threshold based on weighted loss...")
-    _, _, dev_preds_default = evaluate(model, dev_loader, criterion, device, threshold=0.5)
-    best_t = find_best_threshold(
-        y_true=np.array(dev_preds_default["true_label"]),
-        y_prob=np.array(dev_preds_default["probability"]),
-        metric="loss",
-        pos_weight=pos_weight.item(),
-    )
-    logger.info(f"Best tuned threshold on DEV (min weighted loss): {best_t:.4f}")
-
-    # Re-evaluate with tuned threshold
-    _, dev_metrics, dev_preds = evaluate(model, dev_loader, criterion, device, threshold=best_t)
-
-    # Load and evaluate test set
-    test_data = load_interviews(args.data_dir, "test")
-    print_split_stats(test_data, "test")
-    test_data = precompute_embeddings(
-        test_data, tokenizer,
-        AutoModel.from_pretrained(args.encoder_name).to(device).eval(),
-        device,
-    )
-    test_loader = DataLoader(
-        EmbeddedBagDataset(test_data),
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=collate_embedded_bags,
-    )
-
-    logger.info("Evaluating on TEST split...")
-    _, test_metrics, test_preds = evaluate(model, test_loader, criterion, device, threshold=best_t)
-
-    # --- Save metrics ---
-    final_metrics = {"dev": dev_metrics, "test": test_metrics, "threshold": best_t}
-    with open(out_dir / "metrics.json", "w") as f:
-        json.dump(final_metrics, f, indent=4)
-
-    # --- Save predictions ---
-    dev_df = pd.DataFrame(
-        {k: v for k, v in dev_preds.items() if k not in ["attention_weights", "utterance_texts"]}
-    )
-    dev_df.insert(1, "split", "dev")
-    test_df = pd.DataFrame(
-        {k: v for k, v in test_preds.items() if k not in ["attention_weights", "utterance_texts"]}
-    )
-    test_df.insert(1, "split", "test")
-
-    all_preds_df = pd.concat([dev_df, test_df], ignore_index=True)
-    all_preds_df.to_csv(out_dir / "predictions.csv", index=False)
-
-    # --- Generate plots ---
-    logger.info("Generating evaluation plots and attention reports...")
-    all_attention_records = []
-
-    for split_name, df, preds_dict in [
-        ("dev", dev_df, dev_preds),
-        ("test", test_df, test_preds),
-    ]:
-        y_true = df["true_label"].values
-        y_pred = df["predicted_label"].values
-        y_prob = df["probability"].values
-        bag_sizes = df["num_utterances"].values
-
-        plot_roc_curve(y_true, y_prob, split_name, out_dir)
-        plot_pr_curve(y_true, y_prob, split_name, out_dir)
-        plot_confusion_matrix(y_true, y_pred, split_name, out_dir)
-        plot_probability_histogram(y_true, y_prob, split_name, out_dir)
-        plot_prob_vs_bag_size(bag_sizes, y_prob, split_name, out_dir)
-        plot_attention_entropy(preds_dict["attention_entropy"], split_name, out_dir)
-
-        # Collect attention weights for JSONL
-        for i, iv_id in enumerate(preds_dict["interview_id"]):
-            weights = preds_dict["attention_weights"][i]
-            texts = preds_dict["utterance_texts"][i]
-            for u_idx, (w, t) in enumerate(zip(weights, texts)):
-                all_attention_records.append({
-                    "interview_id": iv_id,
-                    "split": split_name,
-                    "utterance_index": u_idx,
-                    "attention_weight": float(w),
-                    "utterance_text": t,
-                })
-
-    # Utterance distribution
-    utterance_counts = {
-        "train": [len(iv["utterances"]) for iv in train_data],
-        "dev": dev_df["num_utterances"].tolist(),
-        "test": test_df["num_utterances"].tolist(),
-    }
-    plot_utterance_distribution(utterance_counts, out_dir)
-
-    # Save attention weights JSONL
-    with open(out_dir / "attention_weights.jsonl", "w") as f:
-        for r in all_attention_records:
-            f.write(json.dumps(r) + "\n")
-
-    # --- Qualitative attention report ---
-    attention_examples_md = "# DAMIL-H Attention Interpretation Examples\n\n"
-    num_test_samples = min(5, len(test_preds["interview_id"]))
-    if num_test_samples > 0:
-        sample_indices = np.random.choice(
-            len(test_preds["interview_id"]), num_test_samples, replace=False
-        )
-        for idx in sample_indices:
-            iv_id = test_preds["interview_id"][idx]
-            weights = test_preds["attention_weights"][idx]
-            texts = test_preds["utterance_texts"][idx]
-            true_label = test_preds["true_label"][idx]
-            prob = test_preds["probability"][idx]
-
-            example_dict = {
-                "interview_id": iv_id,
-                "true_label": true_label,
-                "probability": prob,
-                "attention_weights": weights,
-                "utterance_texts": texts,
-            }
-            plot_attention_weights_bar(example_dict, out_dir, f"attention_bar_{iv_id}.png")
-
-            attention_examples_md += f"## Interview: {iv_id}\n"
-            attention_examples_md += f"- **True Label**: {true_label}\n"
-            attention_examples_md += f"- **Predicted Probability**: {prob:.4f}\n\n"
-            attention_examples_md += "### Top 5 Attended Utterances\n"
-
-            top_indices = np.argsort(weights)[::-1][: min(5, len(weights))]
-            for t_idx in top_indices:
-                attention_examples_md += (
-                    f"**[{t_idx}]** (weight: {weights[t_idx]:.4f}): {texts[t_idx]}\n\n"
-                )
-
-        with open(out_dir / "attention_examples.md", "w") as f:
-            f.write(attention_examples_md)
-
-    # --- Summary ---
-    with open(out_dir / "summary.md", "w") as f:
-        f.write("# DAMIL-H (Hierarchical Dual Attention MIL) Baseline\n\n")
-        f.write(f"Encoder: `{args.encoder_name}` (frozen)\n\n")
-        f.write("## Metrics\n```json\n")
-        f.write(json.dumps(final_metrics, indent=4))
-        f.write("\n```\n\n")
-        f.write("## Sample Predictions\n")
-        sample_df = all_preds_df.sample(min(15, len(all_preds_df)), random_state=args.seed)
-        cols = ["interview_id", "split", "num_utterances", "true_label", "predicted_label", "probability"]
-        f.write(sample_df[cols].to_markdown(index=False, floatfmt=".4f"))
-        f.write("\n")
+    plot_roc_curve(np.array(test_results["true_label"]), np.array(test_results["probability"]), "test", out_dir)
+    plot_confusion_matrix(np.array(test_results["true_label"]), (np.array(test_results["probability"]) >= best_t).astype(int), "test", out_dir)
+    
+    # Custom attention plot
+    for i in range(min(5, len(test_results["interview_id"]))):
+        sample_id = test_results["interview_id"][i]
+        example = {
+            "interview_id": sample_id,
+            "attention_weights": test_results["attention"][i],
+            "true_label": int(test_results["true_label"][i]),
+            "probability": float(test_results["probability"][i]),
+            "utterance_texts": test_results["utterances"][i] if test_results["utterances"] else None
+        }
+        plot_attention_weights_bar(example, out_dir, f"attention_bar_{sample_id}.png")
 
     logger.info("Done!")
-
 
 if __name__ == "__main__":
     main()

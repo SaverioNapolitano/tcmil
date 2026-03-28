@@ -1,8 +1,3 @@
-"""Monte Carlo Cross Validation script for DAMIL-H baseline.
-
-Repeatedly split data into train/dev/test sets to get robust performance estimates.
-"""
-
 import argparse
 import json
 import logging
@@ -15,6 +10,7 @@ import torch
 import torch.nn as nn
 from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -23,13 +19,16 @@ from dataset import load_all_interviews
 from models.damil_h import DAMILHClassifier
 from training.train_damil_h import (
     EmbeddedBagDataset,
+    TokenizedBagDataset,
     collate_embedded_bags,
+    collate_tokenized_bags,
     train_epoch,
     evaluate,
     precompute_embeddings,
     set_seed,
     ENCODER_NAME,
     MAX_TOKEN_LENGTH,
+    ATT_HIDDEN_DIM,
 )
 from utils.evaluation import run_monte_carlo_cv
 from utils.metrics import find_best_threshold
@@ -40,19 +39,28 @@ def main():
     parser = argparse.ArgumentParser(description="Monte Carlo CV for DAMIL-H")
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument("--output_dir", type=str, default="results/cv_damil_h")
+    
+    # CV Config
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--n_seeds", type=int, default=3)
     parser.add_argument("--test_size", type=float, default=0.2)
     parser.add_argument("--val_size", type=float, default=0.2)
+    
+    # Model/Training Config
     parser.add_argument("--encoder_name", type=str, default=ENCODER_NAME)
+    parser.add_argument("--unfreeze_top_layers", type=int, default=0)
     parser.add_argument("--max_len", type=int, default=MAX_TOKEN_LENGTH)
     parser.add_argument("--proj_dim", type=int, default=0)
-    parser.add_argument("--att_hidden_dim", type=int, default=32)
+    parser.add_argument("--att_hidden_dim", type=int, default=ATT_HIDDEN_DIM)
     parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--max_epochs", type=int, default=50) # Reduced for CV
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--max_epochs", type=int, default=50)
+    parser.add_argument("--encoder_lr", type=float, default=2e-5)
+    parser.add_argument("--head_lr", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=10)
-    parser.add_argument("--entropy_lambda", type=float, default=0.01)
+    parser.add_argument("--entropy_lambda", type=float, default=0.0)
+    parser.add_argument("--max_grad_norm", type=float, default=1.0)
+    parser.add_argument("--checkpoint_metric", type=str, default="pr_auc")
+    
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -71,31 +79,26 @@ def main():
     logger = logging.getLogger(__name__)
     logger.info(f"Arguments: {args}")
 
-    device = torch.device(
-        "cuda" if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available()
-        else "cpu"
-    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
     # --- Data Loading ---
     logger.info("Loading all interviews for CV...")
     all_interviews = load_all_interviews(args.data_dir)
     
-    # --- Pre-compute embeddings ONCE for all data ---
-    logger.info(f"Pre-computing embeddings with frozen {args.encoder_name}...")
+    is_fine_tuning = (args.unfreeze_top_layers > 0)
     tokenizer = AutoTokenizer.from_pretrained(args.encoder_name)
-    encoder = AutoModel.from_pretrained(args.encoder_name).to(device)
-    encoder.eval()
-    for p in encoder.parameters():
-        p.requires_grad = False
+    base_encoder = AutoModel.from_pretrained(args.encoder_name).to(device)
+    embedding_dim = base_encoder.config.hidden_size
     
-    all_interviews_embedded = precompute_embeddings(all_interviews, tokenizer, encoder, device)
-    embedding_dim = all_interviews_embedded[0]["embeddings"].size(1)
-    
-    # Free encoder memory
-    del encoder
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    if not is_fine_tuning:
+        logger.info(f"Encoder is frozen. Pre-computing embeddings for all data...")
+        all_interviews = precompute_embeddings(all_interviews, tokenizer, base_encoder, device, max_len=args.max_len)
+        # We can free memory here if not fine-tuning
+        # but run_monte_carlo_cv might need it? No, it just passes objects.
+        # However, to save VRAM during CV:
+        # del base_encoder
+        # torch.cuda.empty_cache()
 
     # --- Define Training Callback ---
     def train_eval_fn(train_pool, test_set, run_seed):
@@ -109,83 +112,83 @@ def main():
         train_data = [train_pool[i] for i in train_idx]
         val_data = [train_pool[i] for i in val_idx]
         
-        # Dataloaders
-        train_loader = DataLoader(
-            EmbeddedBagDataset(train_data),
-            batch_size=args.batch_size,
-            shuffle=True,
-            collate_fn=collate_embedded_bags,
-        )
-        val_loader = DataLoader(
-            EmbeddedBagDataset(val_data),
-            batch_size=args.batch_size,
-            shuffle=False,
-            collate_fn=collate_embedded_bags,
-        )
-        test_loader = DataLoader(
-            EmbeddedBagDataset(test_set),
-            batch_size=args.batch_size,
-            shuffle=False,
-            collate_fn=collate_embedded_bags,
-        )
+        # Decide dataset class and collate
+        if is_fine_tuning:
+            train_ds = TokenizedBagDataset(train_data, tokenizer, args.max_len)
+            val_ds = TokenizedBagDataset(val_data, tokenizer, args.max_len)
+            test_ds = TokenizedBagDataset(test_set, tokenizer, args.max_len)
+            collate = collate_tokenized_bags
+        else:
+            train_ds = EmbeddedBagDataset(train_data)
+            val_ds = EmbeddedBagDataset(val_data)
+            test_ds = EmbeddedBagDataset(test_set)
+            collate = collate_embedded_bags
+            
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate)
+        val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
+        test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
         
         # Model
-        proj_dim = args.proj_dim if args.proj_dim > 0 else None
+        # In frozen mode, we use the same base_encoder but it's set to None in model for efficiency
+        # In fine-tuning mode, we need it.
         model = DAMILHClassifier(
+            encoder=base_encoder if is_fine_tuning else None,
             embedding_dim=embedding_dim,
-            proj_dim=proj_dim,
+            proj_dim=args.proj_dim,
             att_hidden_dim=args.att_hidden_dim,
         ).to(device)
         
-        # Loss and Optimizer
+        if is_fine_tuning:
+            model.unfreeze_top_n_layers(args.unfreeze_top_layers)
+            
+        # Optimizer groups
+        encoder_params = [p for n, p in model.named_parameters() if "encoder" in n and p.requires_grad]
+        head_params = [p for n, p in model.named_parameters() if "encoder" not in n and p.requires_grad]
+        param_groups = [{"params": encoder_params, "lr": args.encoder_lr}, {"params": head_params, "lr": args.head_lr}]
+        optimizer = torch.optim.AdamW(param_groups, weight_decay=1e-4) # Fixed WD for CV
+        
+        # Loss
         num_pos = sum(1 for iv in train_data if iv["label"] == 1)
         num_neg = len(train_data) - num_pos
         pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float).to(device)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
         
         # Training Loop
-        best_val_loss = float("inf")
+        best_score = -float("inf") if args.checkpoint_metric != "val_loss" else float("inf")
         epochs_no_improve = 0
+        checkpoint_path = out_dir / f"temp_best_{run_seed}.pt"
         
         for epoch in range(1, args.max_epochs + 1):
-            train_loss, _ = train_epoch(model, train_loader, criterion, optimizer, device, args.entropy_lambda)
-            val_loss, val_metrics, _ = evaluate(model, val_loader, criterion, device)
+            train_epoch(model, train_loader, criterion, optimizer, device, entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm, is_tokenized=is_fine_tuning)
+            v_loss, v_metrics, _ = evaluate(model, val_loader, criterion, device, is_tokenized=is_fine_tuning)
             
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            score = v_metrics[args.checkpoint_metric] if args.checkpoint_metric != "val_loss" else v_loss
+            is_best = (score > best_score) if args.checkpoint_metric != "val_loss" else (score < best_score)
+            
+            if is_best:
+                best_score = score
                 epochs_no_improve = 0
-                # Use a temporary file for checkpointing within CV to avoid collisions
-                checkpoint_path = out_dir / f"temp_best_{run_seed}.pt"
                 torch.save(model.state_dict(), checkpoint_path)
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= args.patience:
                     break
                     
-        # Load best and evaluate on test
-        model.load_state_dict(torch.load(out_dir / f"temp_best_{run_seed}.pt", weights_only=True))
-        
-        # Tune threshold on val (using weighted loss)
-        _, _, val_preds_default = evaluate(model, val_loader, criterion, device, threshold=0.5)
-        best_t = find_best_threshold(
-            y_true=np.array(val_preds_default["true_label"]),
-            y_prob=np.array(val_preds_default["probability"]),
-            metric="loss",
-            pos_weight=pos_weight.item(),
-        )
+        # Load best and Tune
+        model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
+        _, _, v_preds = evaluate(model, val_loader, criterion, device, threshold=0.5, is_tokenized=is_fine_tuning)
+        best_t = find_best_threshold(np.array(v_preds["true_label"]), np.array(v_preds["probability"]), metric="loss", pos_weight=pos_weight.item())
         
         # Final test evaluation
-        _, test_metrics, _ = evaluate(model, test_loader, criterion, device, threshold=best_t)
+        _, test_metrics, _ = evaluate(model, test_loader, criterion, device, threshold=best_t, is_tokenized=is_fine_tuning)
         
-        # Cleanup checkpoint
-        (out_dir / f"temp_best_{run_seed}.pt").unlink()
-        
+        # Cleanup
+        checkpoint_path.unlink()
         return test_metrics
 
     # --- Run CV ---
     agg_metrics, raw_metrics = run_monte_carlo_cv(
-        interviews=all_interviews_embedded,
+        interviews=all_interviews,
         train_eval_fn=train_eval_fn,
         n_splits=args.n_splits,
         n_seeds_per_split=args.n_seeds,
@@ -204,6 +207,10 @@ def main():
         
     logger.info("\n" + report)
     logger.info(f"Results saved to {out_dir}")
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":

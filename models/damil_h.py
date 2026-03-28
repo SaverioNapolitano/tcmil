@@ -70,11 +70,12 @@ class AttentionPooling(nn.Module):
 class DAMILHClassifier(nn.Module):
     """Hierarchical Dual Attention MIL classifier for depression detection.
 
-    Takes pre-computed utterance embeddings for each dialogue, applies a linear
-    projection, pools via learned attention over utterances, and predicts a
-    binary logit.
+    Supports both pre-computed embeddings and on-the-fly encoding with
+    optional partial fine-tuning of the transformer encoder.
 
     Args:
+        encoder: Pre-trained transformer model (e.g., DistilBertModel).
+                 If None, the model expects pre-computed embeddings in forward().
         embedding_dim: Dimension of input utterance embeddings (default: 768).
         proj_dim: Projection dimension. If None or 0, no projection is applied.
         att_hidden_dim: Hidden dimension for the attention scorer.
@@ -84,13 +85,16 @@ class DAMILHClassifier(nn.Module):
 
     def __init__(
         self,
+        encoder: nn.Module | None = None,
         embedding_dim: int = 768,
         proj_dim: int | None = None,
-        att_hidden_dim: int = 32,
+        att_hidden_dim: int = 64,
         dropout_rate: float = 0.1,
         temperature: float = 1.0,
     ):
         super().__init__()
+        self.encoder = encoder
+        self.embedding_dim = embedding_dim
 
         # Optional linear projection
         if proj_dim is not None and proj_dim > 0:
@@ -115,23 +119,67 @@ class DAMILHClassifier(nn.Module):
         # Binary classifier head
         self.classifier = nn.Linear(pooling_dim, 1)
 
+    def unfreeze_top_n_layers(self, n: int):
+        """Unfreeze the top N transformer layers and the pooler.
+        
+        For DistilBERT, layers are in self.encoder.transformer.layer.
+        """
+        if self.encoder is None:
+            return
+
+        # Start by freezing everything
+        for p in self.encoder.parameters():
+            p.requires_grad = False
+
+        if n <= 0:
+            return
+
+        # Unfreeze top N layers
+        # DistilBERT has 6 layers (0-5)
+        if hasattr(self.encoder, "transformer"):
+            layers = self.encoder.transformer.layer
+            num_layers = len(layers)
+            for i in range(num_layers - n, num_layers):
+                for p in layers[i].parameters():
+                    p.requires_grad = True
+        
+        # Also unfreeze the embeddings or other parts if requested, 
+        # but here we stick to the top N transformer layers as requested.
+
     def forward(
         self,
         bag: torch.Tensor,
         mask: torch.Tensor | None = None,
+        is_tokenized: bool = False,
+        attention_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass for a single bag (dialogue).
 
         Args:
-            bag: Utterance embeddings of shape (num_turns, embedding_dim).
-            mask: Optional boolean mask of shape (num_turns,).
+            bag: Either (num_turns, embedding_dim) embeddings 
+                 OR (num_turns, seq_len) input_ids if is_tokenized=True.
+            mask: Optional boolean mask of shape (num_turns,) for valid turns.
+            is_tokenized: Whether the input bag contains raw tokens.
+            attention_mask: (num_turns, seq_len) mask for the encoder if tokenized.
 
         Returns:
             logit: Scalar logit for binary classification.
             attention_weights: Attention weights of shape (num_turns,).
         """
+        if is_tokenized:
+            if self.encoder is None:
+                raise ValueError("Model has no encoder but received tokenized input.")
+            
+            # bag: (num_turns, seq_len)
+            # encoder output: (num_turns, seq_len, hidden_size)
+            outputs = self.encoder(input_ids=bag, attention_mask=attention_mask)
+            # use [CLS] token: (num_turns, hidden_size)
+            x = outputs.last_hidden_state[:, 0, :]
+        else:
+            x = bag
+
         # Project: (num_turns, pooling_dim)
-        projected = self.projector(bag)
+        projected = self.projector(x)
 
         # Attention pool: (pooling_dim,), (num_turns,)
         pooled, attention_weights = self.attention_pooling(projected, mask=mask)
@@ -146,31 +194,38 @@ class DAMILHClassifier(nn.Module):
         self,
         bags: torch.Tensor,
         bag_sizes: list[int],
+        is_tokenized: bool = False,
+        attention_masks: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """Forward pass for a padded batch of bags.
 
-        Handles variable-length bags by iterating over each bag individually
-        with masking. Compatible with batch_size >= 1.
-
         Args:
-            bags: Padded tensor of shape (batch_size, max_turns, embedding_dim).
-            bag_sizes: Number of valid (non-padding) turns per bag.
+            bags: (batch_size, max_turns, embedding_dim) 
+                  OR (batch_size, max_turns, seq_len) if tokenized.
+            bag_sizes: Number of valid turns per bag.
+            is_tokenized: Whether the input bags contain raw tokens.
+            attention_masks: (batch_size, max_turns, seq_len) if tokenized.
 
         Returns:
             logits: Tensor of shape (batch_size,).
             attention_weights_list: List of tensors, each (num_valid_turns,).
         """
         batch_size = bags.size(0)
-        max_turns = bags.size(1)
-
         logits = []
         attention_weights_list = []
 
         for i in range(batch_size):
             n = bag_sizes[i]
-            # Extract only valid turns (no padding)
-            bag_i = bags[i, :n, :]  # (n, embedding_dim)
-            logit, att_w = self.forward(bag_i)
+            bag_i = bags[i, :n, ...]  # (n, ...)
+            
+            if is_tokenized:
+                attn_mask_i = attention_masks[i, :n, :] # (n, seq_len)
+                logit, att_w = self.forward(
+                    bag_i, is_tokenized=True, attention_mask=attn_mask_i
+                )
+            else:
+                logit, att_w = self.forward(bag_i)
+                
             logits.append(logit)
             attention_weights_list.append(att_w)
 
