@@ -48,10 +48,10 @@ def main():
     
     # Model/Training Config
     parser.add_argument("--encoder_name", type=str, default=ENCODER_NAME)
-    parser.add_argument("--unfreeze_top_layers", type=int, default=0)
-    parser.add_argument("--max_len", type=int, default=MAX_TOKEN_LENGTH)
+    parser.add_argument("--unfreeze_top_layers", type=int, default=2)
+    parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--proj_dim", type=int, default=0)
-    parser.add_argument("--att_hidden_dim", type=int, default=ATT_HIDDEN_DIM)
+    parser.add_argument("--att_hidden_dim", type=int, default=64)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--max_epochs", type=int, default=50)
     parser.add_argument("--encoder_lr", type=float, default=2e-5)
