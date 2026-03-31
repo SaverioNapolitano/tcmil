@@ -133,3 +133,101 @@ def load_all_interviews(data_dir: str | Path) -> list[dict]:
             
     print(f"\nLoaded {len(all_interviews)} total interviews across all splits.")
     return all_interviews
+
+
+def load_interviews_with_roles(
+    data_dir: str | Path,
+    split: str,
+) -> list[dict]:
+    """Load all interviews for a given split, keeping both participant and interviewer utterances.
+
+    Each interview is returned as a dict with keys:
+        - interview_id: int (Participant_ID)
+        - label: int (0 or 1)
+        - utterances: list[str] (participant utterances, non-empty)
+        - interviewer_utterances: list[str] (Ellie utterances, non-empty)
+
+    Args:
+        data_dir: Root data directory (e.g., "data").
+        split: One of "train", "dev", "test".
+
+    Returns:
+        List of interview dictionaries with both roles.
+    """
+    data_dir = Path(data_dir)
+
+    # --- Load labels ---
+    label_files = {
+        "train": "train_split_Depression_AVEC2017.csv",
+        "dev": "dev_split_Depression_AVEC2017.csv",
+        "test": "full_test_split.csv",
+    }
+    label_path = data_dir / "labels" / label_files[split]
+    labels_df = pd.read_csv(label_path)
+    label_col = _LABEL_COL[split]
+
+    # Build {participant_id: label} mapping
+    id_to_label = dict(
+        zip(labels_df["Participant_ID"], labels_df[label_col])
+    )
+
+    # --- Load transcripts ---
+    transcript_dir = data_dir / "preprocessed" / split
+    interviews = []
+
+    for pid, label in sorted(id_to_label.items()):
+        transcript_path = transcript_dir / f"{pid}_TRANSCRIPT.csv"
+
+        if not transcript_path.exists():
+            print(f"  [WARN] No transcript file for participant {pid}, skipping.")
+            continue
+
+        df = pd.read_csv(transcript_path)
+
+        # Participant utterances
+        participant_df = df[df["speaker"] == "Participant"]
+        utterances = []
+        for text in participant_df["value"]:
+            text = str(text).strip()
+            if text and text.lower() != "nan":
+                utterances.append(text)
+
+        # Interviewer (Ellie) utterances
+        ellie_df = df[df["speaker"] == "Ellie"]
+        interviewer_utterances = []
+        for text in ellie_df["value"]:
+            text = str(text).strip()
+            if text and text.lower() != "nan":
+                interviewer_utterances.append(text)
+
+        interviews.append({
+            "interview_id": int(pid),
+            "label": int(label),
+            "utterances": utterances,
+            "interviewer_utterances": interviewer_utterances,
+        })
+
+    return interviews
+
+
+def load_all_interviews_with_roles(data_dir: str | Path) -> list[dict]:
+    """Load and combine all splits with both participant and interviewer utterances.
+
+    Useful for cross-validation with DAMIL-R where both roles are needed.
+
+    Args:
+        data_dir: Path to the data directory.
+
+    Returns:
+        A list of interview dictionaries with both roles across all splits.
+    """
+    all_interviews = []
+    for split in ["train", "dev", "test"]:
+        try:
+            interviews = load_interviews_with_roles(data_dir, split)
+            all_interviews.extend(interviews)
+        except Exception as e:
+            print(f"Warning: Could not load split '{split}': {e}")
+
+    print(f"\nLoaded {len(all_interviews)} total interviews (with roles) across all splits.")
+    return all_interviews

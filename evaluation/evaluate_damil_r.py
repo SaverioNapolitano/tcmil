@@ -1,7 +1,7 @@
-"""Standalone evaluation script for DAMIL-H.
+"""Standalone evaluation script for DAMIL-R.
 
-Loads a trained DAMIL-H checkpoint and evaluates on train, dev, and test splits.
-Produces metrics, predictions CSV, and all evaluation plots.
+Loads a trained DAMIL-R checkpoint and evaluates on train, dev, and test splits.
+Produces metrics, predictions CSV, cross-attention heatmaps, and all evaluation plots.
 """
 
 import argparse
@@ -19,19 +19,23 @@ from transformers import AutoModel, AutoTokenizer
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from dataset import load_interviews, print_split_stats
-from models.damil_h import DAMILHClassifier
-from training.train_damil_h import (
-    EmbeddedBagDataset,
-    collate_embedded_bags,
+from dataset import load_interviews_with_roles, print_split_stats
+from models.damil_r import DAMILRClassifier
+from plots.cross_attention import (
+    plot_cross_attention_entropy_histogram,
+    plot_cross_attention_heatmap,
+    plot_turn_attention_histogram,
+)
+from training.train_damil_r import (
+    DualRoleBagDataset,
+    collate_dual_role_bags,
     evaluate,
-    precompute_embeddings,
+    precompute_dual_role_embeddings,
     set_seed,
 )
-from utils.metrics import compute_attention_entropy, find_best_threshold
+from utils.metrics import find_best_threshold
 from utils.plots import (
     plot_attention_entropy,
-    plot_attention_weights_bar,
     plot_confusion_matrix,
     plot_pr_curve,
     plot_prob_vs_bag_size,
@@ -41,7 +45,7 @@ from utils.plots import (
 
 
 def evaluate_split(
-    model: DAMILHClassifier,
+    model: DAMILRClassifier,
     interviews: list[dict],
     tokenizer,
     encoder,
@@ -58,12 +62,12 @@ def evaluate_split(
     Returns:
         Metrics dictionary for this split.
     """
-    data = precompute_embeddings(interviews, tokenizer, encoder, device)
+    data = precompute_dual_role_embeddings(interviews, tokenizer, encoder, device)
     loader = DataLoader(
-        EmbeddedBagDataset(data),
+        DualRoleBagDataset(data),
         batch_size=batch_size,
         shuffle=False,
-        collate_fn=collate_embedded_bags,
+        collate_fn=collate_dual_role_bags,
     )
 
     _, metrics, preds = evaluate(model, loader, criterion, device, threshold=threshold)
@@ -75,57 +79,70 @@ def evaluate_split(
         f"PR-AUC={metrics['pr_auc']:.4f}"
     )
 
-    # Save predictions
-    pred_df = pd.DataFrame(
-        {k: v for k, v in preds.items() if k not in ["attention_weights", "utterance_texts"]}
-    )
+    # Save predictions (excluding large attention matrices)
+    pred_df = pd.DataFrame({
+        "interview_id": preds["interview_id"],
+        "true_label": preds["true_label"],
+        "probability": preds["probability"],
+        "predicted_label": preds["predicted_label"],
+        "cross_attention_entropy": preds["cross_attention_entropy"],
+        "turn_attention_entropy": preds["turn_attention_entropy"],
+    })
     pred_df.insert(1, "split", split_name)
     pred_df.to_csv(output_dir / f"predictions_{split_name}.csv", index=False)
 
-    # Plots
+    # Standard Plots
     y_true = np.array(preds["true_label"])
     y_pred = np.array(preds["predicted_label"])
     y_prob = np.array(preds["probability"])
-    bag_sizes = np.array(preds["num_utterances"])
 
     plot_roc_curve(y_true, y_prob, split_name, output_dir)
     plot_pr_curve(y_true, y_prob, split_name, output_dir)
     plot_confusion_matrix(y_true, y_pred, split_name, output_dir)
     plot_probability_histogram(y_true, y_prob, split_name, output_dir)
-    plot_prob_vs_bag_size(bag_sizes, y_prob, split_name, output_dir)
-    plot_attention_entropy(preds["attention_entropy"], split_name, output_dir)
 
-    # Attention bar plots for a few samples
+    if preds["num_utterances"]:
+        bag_sizes = np.array(preds["num_utterances"])
+        plot_prob_vs_bag_size(bag_sizes, y_prob, split_name, output_dir)
+
+    # Turn-level attention
+    plot_turn_attention_histogram(preds["turn_attention_weights"], split_name, output_dir)
+    plot_attention_entropy(preds["turn_attention_entropy"], split_name, output_dir)
+
+    # Cross-attention diagnostics
+    plot_cross_attention_entropy_histogram(
+        preds["cross_attention_entropy"], split_name, output_dir,
+    )
+
+    # Cross-attention heatmaps for a few samples
     num_samples = min(3, len(preds["interview_id"]))
     if num_samples > 0:
         indices = np.random.choice(len(preds["interview_id"]), num_samples, replace=False)
         for idx in indices:
-            example = {
-                "interview_id": preds["interview_id"][idx],
-                "true_label": preds["true_label"][idx],
-                "probability": preds["probability"][idx],
-                "attention_weights": preds["attention_weights"][idx],
-                "utterance_texts": preds["utterance_texts"][idx],
-            }
-            plot_attention_weights_bar(
-                example, output_dir,
-                f"attention_bar_{split_name}_{example['interview_id']}.png",
+            plot_cross_attention_heatmap(
+                dialogue_id=preds["interview_id"][idx],
+                attn_matrix=preds["cross_attention_weights"][idx],
+                true_label=preds["true_label"][idx],
+                predicted_prob=preds["probability"][idx],
+                output_dir=output_dir,
+                patient_texts=preds["utterance_texts"][idx] if preds["utterance_texts"] else None,
+                interviewer_texts=preds["interviewer_utterance_texts"][idx] if preds["interviewer_utterance_texts"] else None,
             )
 
     return metrics
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate DAMIL-H on all splits")
+    parser = argparse.ArgumentParser(description="Evaluate DAMIL-R on all splits")
     parser.add_argument("--data_dir", type=str, default="data")
-    parser.add_argument("--model_dir", type=str, default="results/damil_h",
+    parser.add_argument("--model_dir", type=str, default="results/damil_r",
                         help="Directory containing best_model.pt and metrics.json")
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Output directory (defaults to model_dir/eval)")
     parser.add_argument("--encoder_name", type=str, default="distilbert-base-uncased")
-    parser.add_argument("--max_len", type=int, default=64)
+    parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--proj_dim", type=int, default=0)
-    parser.add_argument("--att_hidden_dim", type=int, default=32)
+    parser.add_argument("--att_hidden_dim", type=int, default=64)
     parser.add_argument("--attention_temp", type=float, default=1.0)
     parser.add_argument("--dropout_rate", type=float, default=0.1)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -178,7 +195,7 @@ def main():
 
     # --- Load model ---
     proj_dim = args.proj_dim if args.proj_dim > 0 else None
-    model = DAMILHClassifier(
+    model = DAMILRClassifier(
         embedding_dim=embedding_dim,
         proj_dim=proj_dim,
         att_hidden_dim=args.att_hidden_dim,
@@ -197,7 +214,7 @@ def main():
     all_metrics = {}
     for split in ["train", "dev", "test"]:
         logger.info(f"\n--- Evaluating {split.upper()} ---")
-        interviews = load_interviews(args.data_dir, split)
+        interviews = load_interviews_with_roles(args.data_dir, split)
         print_split_stats(interviews, split)
 
         split_metrics = evaluate_split(
