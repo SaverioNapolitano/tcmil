@@ -48,7 +48,7 @@ def main():
     # Model Config
     parser.add_argument("--encoder_name", type=str, default="distilbert-base-uncased")
     parser.add_argument("--max_len", type=int, default=128)
-    parser.add_argument("--proj_dim", type=int, default=0,
+    parser.add_argument("--proj_dim", type=int, default=128,
                         help="Projection dim before cross-attention. 0 = no projection.")
     parser.add_argument("--att_hidden_dim", type=int, default=64)
     parser.add_argument("--attention_temp", type=float, default=1.0)
