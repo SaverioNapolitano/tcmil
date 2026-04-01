@@ -5,28 +5,59 @@ DAMIL-R explicitly models interaction between interviewer (Ellie) and participan
 ## Architecture
 
 ```
-Patient Embeddings (P, 768)  ─────────────────┐
-                                               ├── CrossRoleAttention ──→ Context (P, 768)
-Interviewer Embeddings (I, 768) ──────────────┘                              │
-                                                                             │
-Patient Embeddings (P, 768) ─── concat ─── Context (P, 768) ──→ Fusion (P, 768)
-                                                                      │
-                                                            AttentionPooling ──→ (768,)
-                                                                      │
+Patient Embeddings (P, 768) ──→ Projector ──→ (P, 128) ──┐
+                                                           ├── CrossRoleAttention ──→ Context (P, 128)
+Interviewer Embeddings (I, 768) ──→ Projector ──→ (I, 128)┘           │
+                                                                       │
+Patient (P, 128) ── concat ── Context (P, 128) ──→ Fusion → LayerNorm ──→ Fused (P, 128)
+                                                                       │
+                                                             AttentionPooling ──→ (128,)
+                                                                       │
                                                               Dropout + Linear ──→ logit
 ```
 
+### Design Principles
+
+The architecture is designed for **small datasets** (~140 interviews in DAIC-WOZ):
+
+1. **Shared projector**: Both roles are mapped to a common low-dimensional space (768→128) through a single shared `Linear + ReLU` layer. This is where the model concentrates its learnable capacity.
+2. **Parameter-free cross-attention**: Instead of learnable Q/K/V projections (which overfit rapidly on <100 training samples), the cross-attention uses scaled dot-product directly in the projected space. The shared projector already ensures meaningful similarity.
+3. **Residual fusion with LayerNorm**: The fusion layer uses `LayerNorm(patient + Linear(concat(patient, context)))`, providing a residual connection that lets the model fall back to ignoring interviewer context when it's not helpful.
+4. **Moderate regularization**: Dropout 0.3 on the classifier only — no internal dropout, no label smoothing, no entropy regularization. Over-regularizing this small model prevents learning.
+
 ### Modules
 
-| Module | Purpose | Input → Output |
-|--------|---------|----------------|
-| `CrossRoleAttention` | Patient queries, interviewer K/V | `(P,d), (I,d)` → `(P,d) + (P,I)` |
-| `RoleAwareFusion` | Concat + linear projection | `(P,d), (P,d)` → `(P,d)` |
-| `AttentionPooling` | Tanh-based attention pooling | `(P,d)` → `(d,) + (P,)` |
-| `DAMILRClassifier` | End-to-end classifier | returns `logit, cross_attn, turn_attn` |
+| Module | Purpose | Learnable Params |
+|--------|---------|-----------------|
+| `Projector` | Shared 768→128 embedding space | ~98K |
+| `CrossRoleAttention` | Parameter-free scaled dot-product | **0** |
+| `RoleAwareFusion` | Concat + linear + residual + LayerNorm | ~33K |
+| `AttentionPooling` | Tanh-based attention pooling | ~8K |
+| `Classifier` | Linear 128→1 | ~129 |
+| **Total** | | **~140K** |
 
-- Optional `proj_dim` parameter to project embeddings before cross-attention (default: none, raw 768-dim)
-- `forward_batch()` handles variable-length bags in batched mode
+## Cross-Validation Results
+
+Monte Carlo CV (5 splits × 3 seeds = 15 runs):
+
+| Metric | Mean | Std | 95% CI |
+|--------|------|-----|--------|
+| ROC-AUC | **0.626** | 0.092 | [0.575, 0.677] |
+| PR-AUC | **0.475** | 0.112 | [0.413, 0.537] |
+| Balanced Accuracy | **0.566** | 0.056 | [0.534, 0.597] |
+| Accuracy | **0.598** | 0.127 | [0.528, 0.668] |
+| F1 | 0.367 | 0.172 | [0.272, 0.463] |
+| Recall | 0.485 | 0.333 | [0.301, 0.669] |
+| Precision | 0.342 | 0.153 | [0.257, 0.427] |
+
+### Comparison with Baselines
+
+| Model | ROC-AUC | PR-AUC | BAcc |
+|-------|---------|--------|------|
+| **DAMIL-R** | **0.626** | **0.475** | **0.566** |
+| DAMIL-H | 0.550 | 0.374 | 0.473 |
+
+DAMIL-R outperforms DAMIL-H on all ranking metrics, demonstrating that explicitly modeling cross-role interactions provides a useful inductive bias for depression detection.
 
 ## Project Structure
 
@@ -40,8 +71,8 @@ Patient Embeddings (P, 768) ─── concat ─── Context (P, 768) ──�
 ### Model Layer
 
 **`models/damil_r.py`**
-- `CrossRoleAttention` — single-head scaled dot-product attention (Q=patient, K=V=interviewer)
-- `RoleAwareFusion` — concatenation followed by linear projection
+- `CrossRoleAttention` — parameter-free scaled dot-product attention (patient queries interviewer)
+- `RoleAwareFusion` — concatenation + linear projection + residual + LayerNorm
 - `AttentionPooling` — tanh-based learned attention scorer with temperature control
 - `DAMILRClassifier` — wires all modules together, returns logit + both attention weight sets
 
@@ -52,7 +83,7 @@ Patient Embeddings (P, 768) ─── concat ─── Context (P, 768) ──�
 - `precompute_dual_role_embeddings()` — DistilBERT [CLS] embeddings for both roles
 - `train_epoch()` — BCEWithLogitsLoss with class weighting, optional entropy regularization
 - `evaluate()` — returns metrics + cross/turn attention weights + entropies
-- CLI with all hyperparameters, early stopping, threshold tuning on dev
+- ReduceLROnPlateau scheduler, val-loss early stopping, threshold tuning on dev
 
 **`training/cv_damil_r.py`**
 - Monte Carlo CV using shared `run_monte_carlo_cv()` framework
@@ -77,11 +108,8 @@ Patient Embeddings (P, 768) ─── concat ─── Context (P, 768) ──�
 ## Usage
 
 ```bash
-# Train DAMIL-R
+# Train DAMIL-R (with default proj_dim=128)
 python training/train_damil_r.py --data_dir data --output_dir results/damil_r
-
-# With projection (to compare)
-python training/train_damil_r.py --data_dir data --output_dir results/damil_r_proj128 --proj_dim 128
 
 # Monte Carlo CV
 python training/cv_damil_r.py --data_dir data --output_dir results/damil_r_cv
@@ -95,10 +123,11 @@ python evaluation/evaluate_damil_r.py --model_dir results/damil_r --data_dir dat
 | Test | Result |
 |------|--------|
 | `CrossRoleAttention` shapes | ✅ `(P,d)` context, `(P,I)` attention, rows sum to 1.0 |
-| `RoleAwareFusion` shapes | ✅ `(P,d)` fused output |
+| `RoleAwareFusion` shapes | ✅ `(P,d)` fused output with residual + LayerNorm |
 | `AttentionPooling` shapes | ✅ `(d,)` pooled, `(P,)` weights summing to 1.0 |
 | `DAMILRClassifier` forward | ✅ scalar logit, correct attention shapes |
-| `DAMILRClassifier` with `proj_dim=128` | ✅ reduced param count (135K vs 1.2M) |
+| `DAMILRClassifier` with `proj_dim=128` | ✅ 140K trainable params, 11 parameter groups |
 | `forward_batch` variable sizes | ✅ correctly handles `[10,7,4]` patient, `[5,3,2]` interviewer |
+| Gradient flow | ✅ all 11 parameter groups receive gradients |
 | Dataset loading with roles | ✅ 106 train interviews, both roles populated |
-| All module imports | ✅ training, CV, evaluation, plots all importable |
+| CV pipeline | ✅ 15 runs complete, all metrics computed |

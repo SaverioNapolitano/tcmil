@@ -54,7 +54,7 @@ def main():
     parser.add_argument("--attention_temp", type=float, default=1.0)
 
     # Training Config
-    parser.add_argument("--dropout_rate", type=float, default=0.1)
+    parser.add_argument("--dropout_rate", type=float, default=0.3)
     parser.add_argument("--entropy_lambda", type=float, default=0.0)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=50)
@@ -144,6 +144,9 @@ def main():
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=args.lr, weight_decay=1e-4,
         )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6,
+        )
 
         # Loss with class weighting
         num_pos = sum(1 for iv in train_data if iv["label"] == 1)
@@ -162,6 +165,7 @@ def main():
                 entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm,
             )
             v_loss, v_metrics, _ = evaluate(model, val_loader, criterion, device)
+            scheduler.step(v_loss)
 
             logger.info(
                 f"   [Epoch {epoch:02d}] Loss: {tr_loss:.4f}/{v_loss:.4f} | "

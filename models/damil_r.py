@@ -5,16 +5,22 @@ interviewer turns. It uses cross-role attention (patient queries, interviewer ke
 to produce role-aware contextualized patient representations, which are then pooled via
 learned attention and classified.
 
+Design for small dataset (~140 interviews):
+    - Shared projection maps both roles to a common low-dim space
+    - Cross-attention is parameter-free (scaled dot-product in projected space)
+    - Fusion uses a single linear layer with LayerNorm for training stability
+    - All model complexity is concentrated in the shared projector
+
 Architecture:
-    Patient embeddings   (P, d)  ──┐
-                                   ├─ CrossRoleAttention ──→ Context (P, d)
-    Interviewer embeddings (I, d) ─┘                            │
-                                                                │
+    Patient embeddings   (P, 768)  ──→ Projector ──→  (P, d)  ──┐
+                                                                  ├─ CrossRoleAttention ──→ Context (P, d)
+    Interviewer embeddings (I, 768)  ──→ Projector ──→  (I, d)  ─┘           │
+                                                                              │
     Patient (P, d) ── concat ── Context (P, d) ──→ RoleAwareFusion ──→ Fused (P, d)
-                                                        │
-                                               AttentionPooling ──→ (d,)
-                                                        │
-                                                 Dropout + Linear ──→ logit
+                                                                  │
+                                                         AttentionPooling ──→ (d,)
+                                                                  │
+                                                           Dropout + Linear ──→ logit
 """
 
 import torch
@@ -22,22 +28,24 @@ import torch.nn as nn
 
 
 class CrossRoleAttention(nn.Module):
-    """Single-head cross-attention from patient turns to interviewer turns.
+    """Parameter-free scaled dot-product cross-attention from patient to interviewer.
+
+    Since both roles are already projected into a shared embedding space by the
+    upstream projector, the raw dot-product between projected patient and
+    interviewer embeddings is meaningful. No additional Q/K/V projections are
+    needed — this keeps the parameter count low, critical for small datasets.
 
     Computes:
-        Q = patient embeddings          (P, d)
-        K = interviewer embeddings      (I, d)
-        V = interviewer embeddings      (I, d)
-        attention_scores = softmax(QK^T / sqrt(d))   (P, I)
-        context = attention_scores @ V               (P, d)
+        attention_scores = softmax(patient @ interviewer^T / sqrt(d))   (P, I)
+        context = attention_scores @ interviewer                        (P, d)
 
     Args:
-        embedding_dim: Dimensionality of input embeddings.
+        dim: Dimensionality of the shared projection space.
     """
 
-    def __init__(self, embedding_dim: int):
+    def __init__(self, dim: int):
         super().__init__()
-        self.scale = embedding_dim ** 0.5
+        self.scale = dim ** 0.5
 
     def forward(
         self,
@@ -67,18 +75,22 @@ class CrossRoleAttention(nn.Module):
 
 
 class RoleAwareFusion(nn.Module):
-    """Fuse patient embeddings with cross-role context via concatenation + projection.
+    """Fuse patient embeddings with cross-role context.
 
-    Computes:
-        fused = Linear(concat(patient, context))
+    Uses concatenation + linear projection with LayerNorm for stability.
+    A residual connection from the patient representation ensures the model
+    can fall back to ignoring the interviewer context when it's not helpful.
+
+        fused = LayerNorm(patient + Linear(concat(patient, context)))
 
     Args:
-        embedding_dim: Dimensionality of each input (patient and context are same dim).
+        dim: Dimensionality of both patient and context embeddings.
     """
 
-    def __init__(self, embedding_dim: int):
+    def __init__(self, dim: int):
         super().__init__()
-        self.projection = nn.Linear(2 * embedding_dim, embedding_dim)
+        self.projection = nn.Linear(2 * dim, dim)
+        self.layer_norm = nn.LayerNorm(dim)
 
     def forward(
         self, patient: torch.Tensor, context: torch.Tensor
@@ -92,9 +104,11 @@ class RoleAwareFusion(nn.Module):
         Returns:
             Fused representation of shape (P, d).
         """
-        # (P, 2d) -> (P, d)
         concatenated = torch.cat([patient, context], dim=-1)
-        return self.projection(concatenated)
+        projected = self.projection(concatenated)
+        fused = self.layer_norm(patient + projected)
+
+        return fused
 
 
 class AttentionPooling(nn.Module):
@@ -151,14 +165,18 @@ class AttentionPooling(nn.Module):
 class DAMILRClassifier(nn.Module):
     """Role-Aware Dual Attention MIL classifier for depression detection.
 
-    Wires together: CrossRoleAttention → RoleAwareFusion → AttentionPooling → classifier.
+    Wires together: Projector → CrossRoleAttention → RoleAwareFusion → AttentionPooling → classifier.
+
+    Design principle: keep the cross-attention parameter-free and concentrate all
+    learnable capacity in the shared projector and attention pooling. This is
+    critical for small datasets where learned Q/K/V projections overfit rapidly.
 
     Args:
         embedding_dim: Dimension of input utterance embeddings (default: 768).
-        proj_dim: Optional projection dimension. If set, project embeddings before
-                  cross-attention. If None, operate on raw embeddings.
+        proj_dim: Projection dimension for the shared embedding space.
+                  If None or 0, operates on raw embeddings.
         att_hidden_dim: Hidden dimension for the turn-level attention scorer.
-        dropout_rate: Dropout rate applied after attention pooling.
+        dropout_rate: Dropout rate applied after projection and before classification.
         temperature: Softmax temperature for turn-level attention weights.
     """
 
@@ -167,13 +185,15 @@ class DAMILRClassifier(nn.Module):
         embedding_dim: int = 768,
         proj_dim: int | None = None,
         att_hidden_dim: int = 64,
-        dropout_rate: float = 0.1,
+        dropout_rate: float = 0.3,
         temperature: float = 1.0,
+        # Legacy params accepted but ignored for backward compat
+        attn_dim: int | None = None,
     ):
         super().__init__()
         self.embedding_dim = embedding_dim
 
-        # Optional linear projection before cross-attention
+        # Shared projection into a low-dimensional common space
         if proj_dim is not None and proj_dim > 0:
             self.projector = nn.Sequential(
                 nn.Linear(embedding_dim, proj_dim),
@@ -184,8 +204,11 @@ class DAMILRClassifier(nn.Module):
             self.projector = nn.Identity()
             working_dim = embedding_dim
 
-        self.cross_attention = CrossRoleAttention(embedding_dim=working_dim)
-        self.fusion = RoleAwareFusion(embedding_dim=working_dim)
+        # Parameter-free cross-attention in the projected space
+        self.cross_attention = CrossRoleAttention(dim=working_dim)
+
+        # Fusion with residual connection + LayerNorm
+        self.fusion = RoleAwareFusion(dim=working_dim)
 
         self.attention_pooling = AttentionPooling(
             input_dim=working_dim,
@@ -212,14 +235,14 @@ class DAMILRClassifier(nn.Module):
             cross_attention_weights: Cross-attention matrix of shape (P, I).
             turn_attention_weights: Turn-level attention weights of shape (P,).
         """
-        # Project both roles
+        # Project both roles into shared space
         patient = self.projector(patient_emb)
         interviewer = self.projector(interviewer_emb)
 
         # Cross-role attention: patient queries interviewer
         context, cross_attn_weights = self.cross_attention(patient, interviewer)
 
-        # Fuse patient + context
+        # Fuse patient + context with residual
         fused = self.fusion(patient, context)
 
         # Pool across patient turns

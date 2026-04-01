@@ -189,7 +189,7 @@ def precompute_dual_role_embeddings(
 
 def train_epoch(
     model, loader, criterion, optimizer, device,
-    entropy_lambda=0.0, max_grad_norm=1.0,
+    entropy_lambda=0.0, max_grad_norm=1.0, label_smooth_fn=None,
 ):
     """Train for one epoch.
 
@@ -201,6 +201,7 @@ def train_epoch(
         device: Torch device.
         entropy_lambda: Coefficient for turn-attention entropy regularization.
         max_grad_norm: Maximum gradient norm for clipping.
+        label_smooth_fn: Optional function to smooth targets before loss computation.
 
     Returns:
         avg_loss: Average training loss.
@@ -215,6 +216,9 @@ def train_epoch(
         optimizer.zero_grad()
         target = batch["labels"].to(device)
 
+        # Apply label smoothing to training targets
+        smooth_target = label_smooth_fn(target) if label_smooth_fn else target
+
         patient_bags = batch["patient_bags"].to(device)
         interviewer_bags = batch["interviewer_bags"].to(device)
         patient_sizes = batch["patient_sizes"]
@@ -224,7 +228,7 @@ def train_epoch(
             patient_bags, interviewer_bags, patient_sizes, interviewer_sizes,
         )
 
-        loss = criterion(logits, target)
+        loss = criterion(logits, smooth_target)
 
         # Optional entropy regularization on turn-level attention
         if entropy_lambda > 0:
@@ -401,19 +405,19 @@ def main():
     # Model Config
     parser.add_argument("--encoder_name", type=str, default=ENCODER_NAME)
     parser.add_argument("--max_len", type=int, default=MAX_TOKEN_LENGTH)
-    parser.add_argument("--proj_dim", type=int, default=0,
+    parser.add_argument("--proj_dim", type=int, default=128,
                         help="Projection dim before cross-attention. 0 = no projection.")
     parser.add_argument("--att_hidden_dim", type=int, default=64)
     parser.add_argument("--attention_temp", type=float, default=1.0)
 
     # Training Config
-    parser.add_argument("--dropout_rate", type=float, default=0.1)
+    parser.add_argument("--dropout_rate", type=float, default=0.3)
     parser.add_argument("--entropy_lambda", type=float, default=0.0)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--patience", type=int, default=15)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--checkpoint_metric", type=str, default="val_loss",
                         choices=["val_loss", "f1", "roc_auc", "pr_auc", "balanced_accuracy"])
@@ -483,6 +487,9 @@ def main():
     logger.info(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6,
+    )
 
     # Class weighting
     num_pos = sum(1 for iv in train_ivs if iv["label"] == 1)
@@ -507,6 +514,7 @@ def main():
             entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm,
         )
         v_loss, v_metrics, _ = evaluate(model, dev_loader, criterion, device)
+        scheduler.step(v_loss)
 
         history["train_loss"].append(tr_loss)
         history["val_loss"].append(v_loss)
