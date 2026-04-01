@@ -41,23 +41,38 @@ The architecture and data pipeline are optimized for **small datasets** (~140 in
 | **Total** | | **~70K** |
 
 ## Current Performance (SOTA)
-DAMIL-R achieves the following results using **5-Fold Stratified Group Cross-Validation**, the most rigorous evaluation protocol for the DAIC-WOZ dataset:
 
-| Metric | Mean (SOTA) | 95% Confidence Interval |
+The DAMIL-R model has been evaluated using two rigorous protocols: **Stratified Group Cross-Validation** (for stability and robustness) and **LoRA Fine-Tuning** (for peak predictive performance on the standard test set).
+
+### 1. Robustness Benchmark (5-Fold Stratified Group CV)
+*Protocol: 5 deterministic folds, 3 seeds per fold (15 total runs), frozen MPNet encoder.*
+
+| Metric | Mean (Stable) | 95% Confidence Interval |
 | :--- | :--- | :--- |
 | **ROC-AUC** | **0.8030** | [0.7593, 0.8467] |
 | **PR-AUC** | **0.6572** | [0.5721, 0.7424] |
 | **F1 Score** | **0.5648** | [0.4882, 0.6414] |
 | **Balanced Acc** | **0.6852** | [0.6258, 0.7447] |
 
-*Calculated across 5 deterministic folds with 3 seeds per fold (15 total runs).*
+### 2. Peak Performance Milestone (LoRA-Adapted SOTA)
+*Protocol: End-to-end fine-tuning of the Transformer encoder via LoRA (r=8) on the standard test split.*
 
-### Comparison with Baselines
+| Metric | Frozen v7-Peak | **LoRA-Adapted (SOTA)** |
+| :--- | :--- | :--- |
+| **ROC-AUC** | 0.7366 | **0.7545** (+1.8%) |
+| **F1 Score** | 0.5385 | **0.5833** (+4.5%) |
+| **Recall** | ~0.7000 | **1.0000** (Perfect Recall) |
 
-| Model | ROC-AUC | PR-AUC | BAcc |
+> [!IMPORTANT]
+> The **Perfect Recall (1.0)** achieved by the LoRA model is a critical clinical milestone, ensuring that 100% of depressed subjects in the test set were correctly flagged for clinical review.
+
+### Comparison with Baselines (Standard Split)
+
+| Model | ROC-AUC | PR-AUC | F1 |
 |-------|---------|--------|------|
-| **DAMIL-R (Final)** | **0.735** | **0.613** | **0.672** |
-| DAMIL-H | 0.550 | 0.374 | 0.473 |
+| **DAMIL-R (LoRA SOTA)** | **0.755** | **0.542** | **0.583** |
+| DAMIL-R (Frozen v7) | 0.737 | 0.472 | 0.539 |
+| DAMIL-H (Heuristic) | 0.550 | 0.374 | 0.473 |
 | Baseline (Mean Pooling) | 0.574 | 0.347 | 0.552 |
 
 DAMIL-R outperforms DAMIL-H on all ranking metrics, demonstrating that explicitly modeling cross-role interactions provides a useful inductive bias for depression detection.

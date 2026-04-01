@@ -38,11 +38,30 @@ python training/train_damil_r_lora.py \
 ```
 
 ### Resource Requirements
-- **VRAM:** 24GB+ (Recommended).
+- **VRAM:** 24GB+ (A100, RTX 3090/4090 recommended).
 - **Batch Size:** Fixed at `1` with `grad_accum=8` to manage the large "bag size" of interviews (150-300 turns).
 - **Time:** ~15-25 minutes per epoch on a modern NVIDIA GPU.
 
-## 4. Key Features
+## 4. Run Cross-Validation (Hardened Benchmark)
+
+To verify the model's stability across different subject groups, use the LoRA-CV script. This performs 5-Fold Stratified Group CV (deterministic) or Monte Carlo splits.
+
+```bash
+# Run 5-Fold Stratified Group CV (15 total runs: 5 folds x 3 seeds)
+python training/cv_damil_r_lora.py \
+    --mode kfold \
+    --n_folds 5 \
+    --n_seeds 3 \
+    --output_dir results/damil_r_lora_cv \
+    --max_epochs 15 \
+    --patience 3
+```
+
+### CV Runtime Note
+- **Estimated Persistence:** ~5–7 hours total.
+- **Reporting:** Generates a `cv_report.txt` in the output directory with mean ROC-AUC, 95% Confidence Intervals, and PR-AUC.
+
+## 5. Key Features
 - **Differential Learning Rates:** Uses a smaller LR for the LoRA adapters ($2e-5$) to prevent catastrophic forgetting while allowing the DAMIL-R head to learn at $1e-4$.
 - **On-the-Fly Encoding:** Embeddings are no longer pre-computed; the Transformer gradient flows back through the LoRA adapters for every patient turn.
 - **Threshold Tuning:** The classification threshold is automatically tuned on the `dev` set for optimal F1-score on the `test` set.
