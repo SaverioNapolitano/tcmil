@@ -56,13 +56,17 @@ def evaluate_split(
     split_name: str,
     output_dir: Path,
     logger,
+    max_len: int = 128,
+    pooling: str = "mean",
 ) -> dict[str, float]:
     """Evaluate model on a single split and generate plots.
 
     Returns:
         Metrics dictionary for this split.
     """
-    data = precompute_dual_role_embeddings(interviews, tokenizer, encoder, device)
+    data = precompute_dual_role_embeddings(
+        interviews, tokenizer, encoder, device, max_len=max_len, pooling=pooling
+    )
     loader = DataLoader(
         DualRoleBagDataset(data),
         batch_size=batch_size,
@@ -139,10 +143,12 @@ def main():
                         help="Directory containing best_model.pt and metrics.json")
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Output directory (defaults to model_dir/eval)")
-    parser.add_argument("--encoder_name", type=str, default="distilbert-base-uncased")
+    parser.add_argument("--encoder_name", type=str, default="sentence-transformers/all-MiniLM-L6-v2")
     parser.add_argument("--max_len", type=int, default=128)
-    parser.add_argument("--proj_dim", type=int, default=128)
-    parser.add_argument("--att_hidden_dim", type=int, default=64)
+    parser.add_argument("--pooling", type=str, default="mean",
+                        choices=["mean", "cls"], help="Embedding pooling strategy.")
+    parser.add_argument("--proj_dim", type=int, default=64)
+    parser.add_argument("--att_hidden_dim", type=int, default=32)
     parser.add_argument("--attention_temp", type=float, default=1.0)
     parser.add_argument("--dropout_rate", type=float, default=0.3)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -221,6 +227,7 @@ def main():
             model, interviews, tokenizer, encoder, device,
             criterion, threshold, args.batch_size,
             split, output_dir, logger,
+            max_len=args.max_len, pooling=args.pooling,
         )
         all_metrics[split] = split_metrics
 

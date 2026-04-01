@@ -46,15 +46,19 @@ def main():
     parser.add_argument("--val_size", type=float, default=0.15)
 
     # Model Config
-    parser.add_argument("--encoder_name", type=str, default="distilbert-base-uncased")
+    parser.add_argument("--encoder_name", type=str, default="sentence-transformers/all-MiniLM-L6-v2")
     parser.add_argument("--max_len", type=int, default=128)
-    parser.add_argument("--proj_dim", type=int, default=128,
+    parser.add_argument("--pooling", type=str, default="mean",
+                        choices=["mean", "cls"], help="Embedding pooling strategy.")
+    parser.add_argument("--proj_dim", type=int, default=64,
                         help="Projection dim before cross-attention. 0 = no projection.")
-    parser.add_argument("--att_hidden_dim", type=int, default=64)
+    parser.add_argument("--att_hidden_dim", type=int, default=32)
     parser.add_argument("--attention_temp", type=float, default=1.0)
 
     # Training Config
     parser.add_argument("--dropout_rate", type=float, default=0.3)
+    parser.add_argument("--instance_dropout", type=float, default=0.15,
+                        help="Fraction of utterances to randomly drop during training.")
     parser.add_argument("--entropy_lambda", type=float, default=0.0)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=50)
@@ -100,9 +104,10 @@ def main():
         p.requires_grad = False
     embedding_dim = base_encoder.config.hidden_size
 
-    logger.info("Pre-computing embeddings for all data (both roles)...")
+    logger.info(f"Pre-computing embeddings (pooling={args.pooling})...")
     all_interviews = precompute_dual_role_embeddings(
-        all_interviews, tokenizer, base_encoder, device, max_len=args.max_len,
+        all_interviews, tokenizer, base_encoder, device,
+        max_len=args.max_len, pooling=args.pooling,
     )
 
     # --- Define Training Callback ---
@@ -117,7 +122,7 @@ def main():
         train_data = [train_pool[i] for i in train_idx]
         val_data = [train_pool[i] for i in val_idx]
 
-        train_ds = DualRoleBagDataset(train_data)
+        train_ds = DualRoleBagDataset(train_data, instance_dropout=args.instance_dropout)
         val_ds = DualRoleBagDataset(val_data)
         test_ds = DualRoleBagDataset(test_set)
 

@@ -1,7 +1,8 @@
 """Training script for DAMIL-R (Role-Aware Dual Attention MIL).
 
-Pre-computes DistilBERT [CLS] embeddings for both participant and interviewer
-utterances, then trains a cross-attention MIL classifier on frozen representations.
+Pre-computes sentence embeddings (mean-pooled transformer) for both participant
+and interviewer utterances, then trains a cross-attention MIL classifier on
+frozen representations.
 """
 
 import argparse
@@ -14,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -54,8 +56,9 @@ def set_seed(seed: int):
 # Constants
 # ---------------------------------------------------------------------------
 
-ENCODER_NAME = "distilbert-base-uncased"
+ENCODER_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 MAX_TOKEN_LENGTH = 128
+DEFAULT_POOLING = "mean"  # "mean" or "cls"
 
 
 # ---------------------------------------------------------------------------
@@ -63,19 +66,47 @@ MAX_TOKEN_LENGTH = 128
 # ---------------------------------------------------------------------------
 
 class DualRoleBagDataset(Dataset):
-    """Dataset for pre-computed utterance embeddings with both roles."""
+    """Dataset for pre-computed utterance embeddings with both roles.
 
-    def __init__(self, interviews: list[dict]):
+    Supports instance dropout: during training, randomly drops utterances
+    from each bag to create diverse views of each interview. This is a
+    standard MIL augmentation technique that prevents overfitting to
+    specific utterance combinations.
+    """
+
+    def __init__(self, interviews: list[dict], instance_dropout: float = 0.0):
         self.interviews = interviews
+        self.instance_dropout = instance_dropout
 
     def __len__(self):
         return len(self.interviews)
 
     def __getitem__(self, idx):
         item = self.interviews[idx]
+        patient_bag = item["patient_embeddings"]       # (P, d)
+        interviewer_bag = item["interviewer_embeddings"]  # (I, d)
+
+        # Instance dropout: randomly drop utterances during training
+        if self.instance_dropout > 0:
+            # Patient: keep at least 2 utterances
+            if patient_bag.size(0) > 2:
+                mask = torch.rand(patient_bag.size(0)) > self.instance_dropout
+                mask[0] = True  # always keep at least the first
+                if mask.sum() < 2:
+                    mask[:2] = True
+                patient_bag = patient_bag[mask]
+
+            # Interviewer: keep at least 2 utterances
+            if interviewer_bag.size(0) > 2:
+                mask = torch.rand(interviewer_bag.size(0)) > self.instance_dropout
+                mask[0] = True
+                if mask.sum() < 2:
+                    mask[:2] = True
+                interviewer_bag = interviewer_bag[mask]
+
         return {
-            "patient_bag": item["patient_embeddings"],      # (P, d)
-            "interviewer_bag": item["interviewer_embeddings"],  # (I, d)
+            "patient_bag": patient_bag,
+            "interviewer_bag": interviewer_bag,
             "label": torch.tensor(item["label"], dtype=torch.float),
             "interview_id": item["interview_id"],
             "utterances": item.get("utterances", []),
@@ -122,6 +153,15 @@ def collate_dual_role_bags(batch):
 # Embedding Pre-computation
 # ---------------------------------------------------------------------------
 
+def mean_pooling(model_output, attention_mask):
+    """Compute mean pooling over token embeddings, respecting attention mask."""
+    token_embeddings = model_output.last_hidden_state  # (batch, seq_len, hidden)
+    mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    summed = torch.sum(token_embeddings * mask_expanded, dim=1)
+    counts = torch.clamp(mask_expanded.sum(dim=1), min=1e-9)
+    return summed / counts
+
+
 @torch.no_grad()
 def precompute_dual_role_embeddings(
     interviews: list[dict],
@@ -129,8 +169,13 @@ def precompute_dual_role_embeddings(
     encoder,
     device,
     max_len: int = MAX_TOKEN_LENGTH,
+    pooling: str = DEFAULT_POOLING,
 ) -> list[dict]:
-    """Pre-compute DistilBERT [CLS] embeddings for both participant and interviewer utterances.
+    """Pre-compute sentence embeddings for both participant and interviewer utterances.
+
+    Supports two pooling strategies:
+    - "cls": Use the [CLS] token (traditional BERT approach)
+    - "mean": Mean pooling over all tokens (sentence-transformer approach, recommended)
 
     Args:
         interviews: List of interview dicts with 'utterances' and 'interviewer_utterances'.
@@ -138,6 +183,7 @@ def precompute_dual_role_embeddings(
         encoder: HuggingFace transformer model.
         device: Torch device.
         max_len: Maximum token length for truncation.
+        pooling: Pooling strategy ('cls' or 'mean').
 
     Returns:
         Enriched interview list with 'patient_embeddings' and 'interviewer_embeddings' tensors.
@@ -158,7 +204,14 @@ def precompute_dual_role_embeddings(
             max_length=max_len,
             return_tensors="pt",
         ).to(device)
-        patient_emb = encoder(**encoded_p).last_hidden_state[:, 0, :].cpu()
+
+        output_p = encoder(**encoded_p)
+        if pooling == "mean":
+            patient_emb = mean_pooling(output_p, encoded_p["attention_mask"])
+            patient_emb = F.normalize(patient_emb, p=2, dim=1)
+        else:
+            patient_emb = output_p.last_hidden_state[:, 0, :]
+        patient_emb = patient_emb.cpu()
 
         # Interviewer utterances
         interviewer_utts = iv.get("interviewer_utterances", [""])
@@ -172,7 +225,14 @@ def precompute_dual_role_embeddings(
             max_length=max_len,
             return_tensors="pt",
         ).to(device)
-        interviewer_emb = encoder(**encoded_i).last_hidden_state[:, 0, :].cpu()
+
+        output_i = encoder(**encoded_i)
+        if pooling == "mean":
+            interviewer_emb = mean_pooling(output_i, encoded_i["attention_mask"])
+            interviewer_emb = F.normalize(interviewer_emb, p=2, dim=1)
+        else:
+            interviewer_emb = output_i.last_hidden_state[:, 0, :]
+        interviewer_emb = interviewer_emb.cpu()
 
         processed.append({
             **iv,
@@ -405,13 +465,17 @@ def main():
     # Model Config
     parser.add_argument("--encoder_name", type=str, default=ENCODER_NAME)
     parser.add_argument("--max_len", type=int, default=MAX_TOKEN_LENGTH)
-    parser.add_argument("--proj_dim", type=int, default=128,
+    parser.add_argument("--pooling", type=str, default=DEFAULT_POOLING,
+                        choices=["mean", "cls"], help="Embedding pooling strategy.")
+    parser.add_argument("--proj_dim", type=int, default=64,
                         help="Projection dim before cross-attention. 0 = no projection.")
-    parser.add_argument("--att_hidden_dim", type=int, default=64)
+    parser.add_argument("--att_hidden_dim", type=int, default=32)
     parser.add_argument("--attention_temp", type=float, default=1.0)
 
     # Training Config
     parser.add_argument("--dropout_rate", type=float, default=0.3)
+    parser.add_argument("--instance_dropout", type=float, default=0.15,
+                        help="Fraction of utterances to randomly drop during training.")
     parser.add_argument("--entropy_lambda", type=float, default=0.0)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -461,14 +525,14 @@ def main():
 
     embedding_dim = encoder.config.hidden_size
 
-    logger.info("Pre-computing embeddings for both roles...")
-    train_ivs = precompute_dual_role_embeddings(train_ivs, tokenizer, encoder, device, args.max_len)
-    dev_ivs = precompute_dual_role_embeddings(dev_ivs, tokenizer, encoder, device, args.max_len)
-    test_ivs = precompute_dual_role_embeddings(test_ivs, tokenizer, encoder, device, args.max_len)
+    logger.info(f"Pre-computing embeddings (pooling={args.pooling})...")
+    train_ivs = precompute_dual_role_embeddings(train_ivs, tokenizer, encoder, device, args.max_len, pooling=args.pooling)
+    dev_ivs = precompute_dual_role_embeddings(dev_ivs, tokenizer, encoder, device, args.max_len, pooling=args.pooling)
+    test_ivs = precompute_dual_role_embeddings(test_ivs, tokenizer, encoder, device, args.max_len, pooling=args.pooling)
 
-    train_dataset = DualRoleBagDataset(train_ivs)
-    dev_dataset = DualRoleBagDataset(dev_ivs)
-    test_dataset = DualRoleBagDataset(test_ivs)
+    train_dataset = DualRoleBagDataset(train_ivs, instance_dropout=args.instance_dropout)
+    dev_dataset = DualRoleBagDataset(dev_ivs)   # no dropout at eval
+    test_dataset = DualRoleBagDataset(test_ivs)  # no dropout at eval
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_dual_role_bags)
     dev_loader = DataLoader(dev_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_dual_role_bags)
