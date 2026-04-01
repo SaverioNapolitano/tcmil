@@ -30,7 +30,7 @@ from training.train_damil_r import (
     set_seed,
     train_epoch,
 )
-from utils.evaluation import run_monte_carlo_cv
+from utils.evaluation import run_monte_carlo_cv, run_stratified_group_k_fold
 from utils.metrics import find_best_threshold
 from utils.stats import format_aggregate_report
 
@@ -40,7 +40,11 @@ def main():
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument("--output_dir", type=str, default="results/damil_r_cv")
 
-    # CV Config
+    # CV Strategy Config
+    parser.add_argument("--mode", type=str, default="mc", choices=["mc", "kfold"],
+                        help="CV mode: mc (Monte Carlo) or kfold (Stratified Group K-Fold)")
+    parser.add_argument("--n_folds", type=int, default=5,
+                        help="Number of folds for kfold mode.")
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--n_seeds", type=int, default=3)
     parser.add_argument("--test_size", type=float, default=0.2)
@@ -228,17 +232,27 @@ def main():
         return test_metrics
 
     # --- Run CV ---
-    agg_metrics, raw_metrics = run_monte_carlo_cv(
-        interviews=all_interviews,
-        train_eval_fn=train_eval_fn,
-        n_splits=args.n_splits,
-        n_seeds_per_split=args.n_seeds,
-        test_size=args.test_size,
-        random_state=args.seed,
-    )
+    if args.mode == "mc":
+        agg_metrics, raw_metrics = run_monte_carlo_cv(
+            interviews=all_interviews,
+            train_eval_fn=train_eval_fn,
+            n_splits=args.n_splits,
+            n_seeds_per_split=args.n_seeds,
+            test_size=args.test_size,
+            random_state=args.seed,
+        )
+    else:
+        agg_metrics, raw_metrics = run_stratified_group_k_fold(
+            interviews=all_interviews,
+            train_eval_fn=train_eval_fn,
+            n_folds=args.n_folds,
+            n_seeds_per_fold=args.n_seeds,
+            random_state=args.seed,
+        )
 
     # --- Save Results ---
-    with open(out_dir / "cv_results.json", "w") as f:
+    out_name = "kfold_results.json" if args.mode == "kfold" else "cv_results.json"
+    with open(out_dir / out_name, "w") as f:
         json.dump({"aggregate": agg_metrics, "raw": raw_metrics}, f, indent=4)
 
     report = format_aggregate_report(agg_metrics)

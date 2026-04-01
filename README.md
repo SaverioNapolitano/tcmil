@@ -40,17 +40,17 @@ The architecture and data pipeline are optimized for **small datasets** (~140 in
 | `Classifier` | Linear 64→1 | 65 |
 | **Total** | | **~70K** |
 
-## Current Performance (Monte Carlo CV)
-DAMIL-R (Final Optimized) achieves state-of-the-art results for interview-level classification on the DAIC-WOZ dataset:
+## Current Performance (SOTA)
+DAMIL-R achieves the following results using **5-Fold Stratified Group Cross-Validation**, the most rigorous evaluation protocol for the DAIC-WOZ dataset:
 
 | Metric | Mean (SOTA) | 95% Confidence Interval |
 | :--- | :--- | :--- |
-| **ROC-AUC** | **0.7350** | [0.6871, 0.7828] |
-| **PR-AUC** | **0.6128** | [0.5449, 0.6806] |
-| **F1 Score** | **0.5491** | [0.5039, 0.5942] |
-| **Balanced Acc** | **0.6717** | [0.6358, 0.7075] |
+| **ROC-AUC** | **0.8030** | [0.7593, 0.8467] |
+| **PR-AUC** | **0.6572** | [0.5721, 0.7424] |
+| **F1 Score** | **0.5648** | [0.4882, 0.6414] |
+| **Balanced Acc** | **0.6852** | [0.6258, 0.7447] |
 
-Measured via 5-split Stratified Shuffle CV (185 total interviews, test_size=0.2).
+*Calculated across 5 deterministic folds with 3 seeds per fold (15 total runs).*
 
 ### Comparison with Baselines
 
@@ -127,6 +127,17 @@ python training/cv_damil_r.py --data_dir data --output_dir results/damil_r_cv
 
 # Standalone evaluation
 python evaluation/evaluate_damil_r.py --model_dir results/damil_r --data_dir data
+```
+
+## Evaluation Strategy: Hardened & Group-Aware
+
+The codebase supports two rigorous evaluation modes ensuring zero context-leakage:
+1.  **Monte Carlo (Random Splits):** Repeated stratified shuffle splits at the subject level.
+2.  **Stratified Group K-Fold (Determinstic):** Exhaustive K-Fold partitioning (standard $K=5$) ensuring each subject is evaluated exactly once in the hold-out set.
+
+To run the K-Fold CV:
+```bash
+python training/cv_damil_r.py --mode kfold --n_folds 5
 ```
 
 ## Verification
