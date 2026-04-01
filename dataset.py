@@ -4,6 +4,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
+from torch.utils.data import Dataset
 
 
 # Column name for binary label differs between train/dev and test splits
@@ -231,3 +233,147 @@ def load_all_interviews_with_roles(data_dir: str | Path) -> list[dict]:
 
     print(f"\nLoaded {len(all_interviews)} total interviews (with roles) across all splits.")
     return all_interviews
+
+
+# ---------------------------------------------------------------------------
+# Datasets and Collation
+# ---------------------------------------------------------------------------
+
+class DualRoleBagDataset(Dataset):
+    """Dataset for pre-computed utterance embeddings with both roles.
+
+    Supports instance dropout: during training, randomly drops utterances
+    from each bag to create diverse views of each interview.
+    """
+
+    def __init__(self, interviews: list[dict], instance_dropout: float = 0.0):
+        self.interviews = interviews
+        self.instance_dropout = instance_dropout
+
+    def __len__(self):
+        return len(self.interviews)
+
+    def __getitem__(self, idx):
+        item = self.interviews[idx]
+        patient_bag = item["patient_embeddings"]       # (P, d)
+        interviewer_bag = item["interviewer_embeddings"]  # (I, d)
+
+        # Instance dropout: randomly drop utterances during training
+        if self.instance_dropout > 0:
+            if patient_bag.size(0) > 2:
+                mask = torch.rand(patient_bag.size(0)) > self.instance_dropout
+                mask[0] = True
+                if mask.sum() < 2: mask[:2] = True
+                patient_bag = patient_bag[mask]
+
+            if interviewer_bag.size(0) > 2:
+                mask = torch.rand(interviewer_bag.size(0)) > self.instance_dropout
+                mask[0] = True
+                if mask.sum() < 2: mask[:2] = True
+                interviewer_bag = interviewer_bag[mask]
+
+        return {
+            "patient_bag": patient_bag,
+            "interviewer_bag": interviewer_bag,
+            "label": torch.tensor(item["label"], dtype=torch.float),
+            "interview_id": item["interview_id"],
+            "utterances": item.get("utterances", []),
+            "interviewer_utterances": item.get("interviewer_utterances", []),
+        }
+
+
+def collate_dual_role_bags(batch):
+    """Collate pre-computed embeddings into padded batches."""
+    patient_bags = [item["patient_bag"] for item in batch]
+    interviewer_bags = [item["interviewer_bag"] for item in batch]
+    labels = torch.stack([item["label"] for item in batch])
+    ids = [item["interview_id"] for item in batch]
+    utts = [item["utterances"] for item in batch]
+    int_utts = [item["interviewer_utterances"] for item in batch]
+
+    patient_sizes = [bag.size(0) for bag in patient_bags]
+    interviewer_sizes = [bag.size(0) for bag in interviewer_bags]
+
+    max_p = max(patient_sizes)
+    max_i = max(interviewer_sizes)
+    d = patient_bags[0].size(1)
+
+    padded_patient = torch.zeros(len(batch), max_p, d)
+    padded_interviewer = torch.zeros(len(batch), max_i, d)
+
+    for idx, (p_bag, i_bag) in enumerate(zip(patient_bags, interviewer_bags)):
+        padded_patient[idx, :patient_sizes[idx], :] = p_bag
+        padded_interviewer[idx, :interviewer_sizes[idx], :] = i_bag
+
+    return {
+        "patient_bags": padded_patient,
+        "interviewer_bags": padded_interviewer,
+        "patient_sizes": patient_sizes,
+        "interviewer_sizes": interviewer_sizes,
+        "labels": labels,
+        "interview_ids": ids,
+        "utterances_lists": utts,
+        "interviewer_utterances_lists": int_utts,
+    }
+
+
+class TokenizedDualRoleBagDataset(Dataset):
+    """Dataset for raw text utterances to be tokenized on-the-fly (for LoRA)."""
+
+    def __init__(self, interviews: list[dict], instance_dropout: float = 0.0):
+        self.interviews = interviews
+        self.instance_dropout = instance_dropout
+
+    def __len__(self):
+        return len(self.interviews)
+
+    def __getitem__(self, idx):
+        item = self.interviews[idx]
+        p_utts = item["utterances"]
+        i_utts = item["interviewer_utterances"]
+
+        # Instance dropout on text level
+        if self.instance_dropout > 0:
+            if len(p_utts) > 2:
+                p_utts = [u for u in p_utts if random.random() > self.instance_dropout]
+                if len(p_utts) < 2: p_utts = item["utterances"][:2]
+            if len(i_utts) > 2:
+                i_utts = [u for u in i_utts if random.random() > self.instance_dropout]
+                if len(i_utts) < 2: i_utts = item["interviewer_utterances"][:2]
+
+        return {
+            "patient_utterances": p_utts,
+            "interviewer_utterances": i_utts,
+            "label": torch.tensor(item["label"], dtype=torch.float),
+            "interview_id": item["interview_id"],
+        }
+
+
+def collate_lora_bags(batch, tokenizer, max_len=128):
+    """Collates raw text into token IDs for Transformer fine-tuning (LoRA)."""
+    # Note: Only works with batch_size=1 due to MIL turn-level variability
+    assert len(batch) == 1, "LoRA MIL collator currently supports batch_size=1 only."
+    item = batch[0]
+    
+    p_encoded = tokenizer(
+        item["patient_utterances"], 
+        padding=True, 
+        truncation=True, 
+        max_length=max_len, 
+        return_tensors="pt"
+    )
+    
+    i_encoded = tokenizer(
+        item["interviewer_utterances"], 
+        padding=True, 
+        truncation=True, 
+        max_length=max_len, 
+        return_tensors="pt"
+    )
+
+    return {
+        "patient_bags": p_encoded,        # {'input_ids': (P, L), 'attention_mask': (P, L)}
+        "interviewer_bags": i_encoded,    # {'input_ids': (I, L), 'attention_mask': (I, L)}
+        "labels": item["label"].unsqueeze(0),
+        "interview_ids": [item["interview_id"]],
+    }
