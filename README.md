@@ -24,20 +24,21 @@ The architecture and data pipeline are optimized for **small datasets** (~140 in
 2. **Embedding Noise Injection**: During training, embedding vectors are augmented with Gaussian noise (`std=0.05`), preventing the projector from memorizing continuous representations.
 3. **Instance Dropout (0.15)**: During training, we randomly drop 15% of utterances from both patient and interviewer bags, forcing the model to rely on multiple signals rather than memorizing exact utterance combinations.
 4. **Shared projector**: Both roles are mapped to a common low-dimensional space (768→64) through a single shared `Linear + ReLU` layer.
-5. **Parameter-free cross-attention**: The cross-attention uses scaled dot-product directly in the projected space, requiring **zero learnable parameters** and preventing rapid overfitting.
-6. **Residual fusion with LayerNorm**: `LayerNorm(patient + Linear(concat(patient, context)))` provides stable gradient flow and allows ignoring unhelpful context.
-7. **Focal Loss**: Replaces BCE to dynamically scale losses based on prediction confidence, heavily pulling the model to learn about hard-to-classify depressive signals and boosting recall.
+5. **Cosine cross-attention**: The cross-attention uses parameter-free **L2-normalized cosine similarity** scaled by a learnable parameter. This prevents Softmax collapse and is highly stable for small datasets.
+6. **Gated Residual Fusion**: Instead of simple addition, fusion uses a GRU-inspired sigmoid gating mechanism, allowing the model to explicitly ignore interviewer context per turn when it isn't helpful.
+7. **Learnable Attention Pooling**: The turn-level attention pooling temperature is dynamically learned. 
+8. **Focal Loss**: Replaces BCE to dynamically scale losses based on prediction confidence, heavily pulling the model to learn about hard-to-classify depressive signals and boosting recall.
 
 ### Modules
 
 | Module | Purpose | Learnable Params |
 |--------|---------|-----------------|
 | `Projector` | Shared 768→64 embedding space | ~49.2K |
-| `CrossRoleAttention` | Parameter-free scaled dot-product | **0** |
-| `RoleAwareFusion` | Concat + linear + residual + LayerNorm | ~8.3K |
-| `AttentionPooling` | Tanh-based attention pooling | ~4.1K |
+| `CrossRoleAttention` | Parameter-free L2 cosine attention + scale param | **1** |
+| `RoleAwareFusion` | Sigmoid-gated residual fusion | ~16.5K |
+| `AttentionPooling` | Tanh-based attention pooling + learnable temp | ~4.1K |
 | `Classifier` | Linear 64→1 | 65 |
-| **Total** | | **~61.7K** |
+| **Total** | | **~70K** |
 
 ## Cross-Validation Results
 
@@ -45,19 +46,19 @@ Monte Carlo CV (5 splits × 3 seeds = 15 runs):
 
 | Metric | Mean | Std | 95% CI |
 |--------|------|-----|--------|
-| ROC-AUC | **0.708** | 0.112 | [0.646, 0.770] |
-| PR-AUC | **0.563** | 0.138 | [0.487, 0.639] |
-| Balanced Accuracy | **0.654** | 0.067 | [0.616, 0.691] |
-| Accuracy | **0.629** | 0.149 | [0.546, 0.711] |
-| F1 | **0.545** | 0.065 | [0.509, 0.581] |
-| Recall | **0.715** | 0.188 | [0.611, 0.819] |
-| Precision | **0.485** | 0.143 | [0.406, 0.564] |
+| ROC-AUC | **0.735** | 0.086 | [0.687, 0.783] |
+| PR-AUC | **0.613** | 0.122 | [0.545, 0.681] |
+| Balanced Accuracy | **0.672** | 0.065 | [0.636, 0.708] |
+| Accuracy | **0.681** | 0.106 | [0.623, 0.740] |
+| F1 | **0.549** | 0.082 | [0.504, 0.594] |
+| Recall | **0.648** | 0.181 | [0.548, 0.749] |
+| Precision | **0.541** | 0.190 | [0.436, 0.646] |
 
 ### Comparison with Baselines
 
 | Model | ROC-AUC | PR-AUC | BAcc |
 |-------|---------|--------|------|
-| **DAMIL-R (Final)** | **0.708** | **0.563** | **0.654** |
+| **DAMIL-R (Final)** | **0.735** | **0.613** | **0.672** |
 | DAMIL-H | 0.550 | 0.374 | 0.473 |
 | Baseline (Mean Pooling) | 0.574 | 0.347 | 0.552 |
 

@@ -28,16 +28,15 @@ import torch.nn as nn
 
 
 class CrossRoleAttention(nn.Module):
-    """Parameter-free scaled dot-product cross-attention from patient to interviewer.
+    """L2-Normalized Cosine cross-attention from patient to interviewer.
 
-    Since both roles are already projected into a shared embedding space by the
-    upstream projector, the raw dot-product between projected patient and
-    interviewer embeddings is meaningful. No additional Q/K/V projections are
-    needed — this keeps the parameter count low, critical for small datasets.
+    Projects both sets of embeddings to the unit hypersphere and computes
+    cosine similarity, scaled by a learnable parameter. This prevents Softmax
+    collapse and stabilizes training on small datasets.
 
     Computes:
-        attention_scores = softmax(patient @ interviewer^T / sqrt(d))   (P, I)
-        context = attention_scores @ interviewer                        (P, d)
+        scores = (norm(patient) @ norm(interviewer)^T) * scale    (P, I)
+        context = softmax(scores) @ interviewer                   (P, d)
 
     Args:
         dim: Dimensionality of the shared projection space.
@@ -45,7 +44,8 @@ class CrossRoleAttention(nn.Module):
 
     def __init__(self, dim: int):
         super().__init__()
-        self.scale = dim ** 0.5
+        # Initialize scale to 10.0 to allow Softmax to peak
+        self.scale = nn.Parameter(torch.tensor(10.0))
 
     def forward(
         self,
@@ -62,8 +62,12 @@ class CrossRoleAttention(nn.Module):
             context: Contextualized patient representations of shape (P, d).
             attention_weights: Cross-attention matrix of shape (P, I).
         """
+        # L2 Normalize
+        p_norm = torch.nn.functional.normalize(patient, p=2, dim=-1)
+        i_norm = torch.nn.functional.normalize(interviewer, p=2, dim=-1)
+
         # scores: (P, I)
-        scores = torch.matmul(patient, interviewer.t()) / self.scale
+        scores = torch.matmul(p_norm, i_norm.t()) * self.scale
 
         # attention_weights: (P, I)
         attention_weights = torch.softmax(scores, dim=-1)
@@ -75,13 +79,15 @@ class CrossRoleAttention(nn.Module):
 
 
 class RoleAwareFusion(nn.Module):
-    """Fuse patient embeddings with cross-role context.
+    """Gated Residual Fusion for patient and context embeddings.
 
-    Uses concatenation + linear projection with LayerNorm for stability.
-    A residual connection from the patient representation ensures the model
-    can fall back to ignoring the interviewer context when it's not helpful.
+    Uses a mechanism inspired by GRUs/Highway Networks:
+        z = sigmoid(Linear(concat(patient, context)))
+        h_tilde = relu(Linear(concat(patient, context)))
+        fused = LayerNorm(z * patient + (1 - z) * h_tilde)
 
-        fused = LayerNorm(patient + Linear(concat(patient, context)))
+    This allows the model to explicitly ignore the interviewer context (z=1)
+    for specific utterances when it's not helpful.
 
     Args:
         dim: Dimensionality of both patient and context embeddings.
@@ -89,7 +95,8 @@ class RoleAwareFusion(nn.Module):
 
     def __init__(self, dim: int):
         super().__init__()
-        self.projection = nn.Linear(2 * dim, dim)
+        self.gate = nn.Linear(2 * dim, dim)
+        self.transform = nn.Linear(2 * dim, dim)
         self.layer_norm = nn.LayerNorm(dim)
 
     def forward(
@@ -105,8 +112,16 @@ class RoleAwareFusion(nn.Module):
             Fused representation of shape (P, d).
         """
         concatenated = torch.cat([patient, context], dim=-1)
-        projected = self.projection(concatenated)
-        fused = self.layer_norm(patient + projected)
+        
+        # z in [0, 1]. If z=1, we keep the original patient turn completely.
+        z = torch.sigmoid(self.gate(concatenated))
+        
+        # candidate representation incorporating context
+        h_tilde = torch.relu(self.transform(concatenated))
+        
+        # gated residual
+        fused_raw = z * patient + (1.0 - z) * h_tilde
+        fused = self.layer_norm(fused_raw)
 
         return fused
 
@@ -127,7 +142,7 @@ class AttentionPooling(nn.Module):
 
     def __init__(self, input_dim: int, hidden_dim: int = 32, temperature: float = 1.0):
         super().__init__()
-        self.temperature = temperature
+        self.temperature = nn.Parameter(torch.tensor(temperature, dtype=torch.float32))
         self.W = nn.Linear(input_dim, hidden_dim)
         self.v = nn.Linear(hidden_dim, 1, bias=False)
 
