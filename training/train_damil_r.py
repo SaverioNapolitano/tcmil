@@ -56,9 +56,39 @@ def set_seed(seed: int):
 # Constants
 # ---------------------------------------------------------------------------
 
-ENCODER_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+ENCODER_NAME = "sentence-transformers/all-mpnet-base-v2"
 MAX_TOKEN_LENGTH = 128
 DEFAULT_POOLING = "mean"  # "mean" or "cls"
+
+
+# ---------------------------------------------------------------------------
+# Loss Functions
+# ---------------------------------------------------------------------------
+
+class FocalLoss(nn.Module):
+    """Focal Loss for handling highly imbalanced datasets.
+    
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    Down-weights easy well-classified examples, focusing on hard, misclassified examples.
+    """
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        bce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        pt = torch.exp(-bce_loss)  # prevents nans when probability 0
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +280,7 @@ def precompute_dual_role_embeddings(
 def train_epoch(
     model, loader, criterion, optimizer, device,
     entropy_lambda=0.0, max_grad_norm=1.0, label_smooth_fn=None,
+    noise_std=0.0,
 ):
     """Train for one epoch.
 
@@ -286,6 +317,7 @@ def train_epoch(
 
         logits, cross_attn_list, turn_attn_list = model.forward_batch(
             patient_bags, interviewer_bags, patient_sizes, interviewer_sizes,
+            noise_std=noise_std,
         )
 
         loss = criterion(logits, smooth_target)
@@ -471,12 +503,16 @@ def main():
                         help="Projection dim before cross-attention. 0 = no projection.")
     parser.add_argument("--att_hidden_dim", type=int, default=32)
     parser.add_argument("--attention_temp", type=float, default=1.0)
+    parser.add_argument("--noise_std", type=float, default=0.05,
+                        help="Gaussian noise std dev for embeddings during training.")
 
     # Training Config
     parser.add_argument("--dropout_rate", type=float, default=0.3)
     parser.add_argument("--instance_dropout", type=float, default=0.15,
                         help="Fraction of utterances to randomly drop during training.")
     parser.add_argument("--entropy_lambda", type=float, default=0.0)
+    parser.add_argument("--loss_type", type=str, default="focal",
+                        choices=["bce", "focal"], help="Loss function to use.")
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--max_epochs", type=int, default=100)
@@ -555,12 +591,19 @@ def main():
         optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6,
     )
 
-    # Class weighting
+    # Class weighting and Loss setup
     num_pos = sum(1 for iv in train_ivs if iv["label"] == 1)
     num_neg = len(train_ivs) - num_pos
     pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float).to(device)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    logger.info(f"Class weighting: pos_weight={pos_weight.item():.4f} (pos={num_pos}, neg={num_neg})")
+    
+    if args.loss_type == "focal":
+        criterion = FocalLoss(alpha=pos_weight.item(), gamma=2.0)
+        logger.info(f"Using FocalLoss (alpha={pos_weight.item():.4f}, gamma=2.0)")
+    else:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        logger.info(f"Using BCEWithLogitsLoss (pos_weight={pos_weight.item():.4f})")
+    
+    logger.info(f"Class distribution: pos={num_pos}, neg={num_neg}")
 
     # --- Training Loop ---
     logger.info("Starting training...")
@@ -576,6 +619,7 @@ def main():
         tr_loss, tr_metrics = train_epoch(
             model, train_loader, criterion, optimizer, device,
             entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm,
+            noise_std=args.noise_std,
         )
         v_loss, v_metrics, _ = evaluate(model, dev_loader, criterion, device)
         scheduler.step(v_loss)

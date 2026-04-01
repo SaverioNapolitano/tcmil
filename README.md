@@ -20,22 +20,24 @@ Patient (P, 64) ── concat ── Context (P, 64) ──→ Fusion → LayerN
 
 The architecture and data pipeline are optimized for **small datasets** (~140 interviews in DAIC-WOZ):
 
-1. **Sentence Embeddings** (`all-MiniLM-L6-v2` + mean pooling): Instead of raw DistilBERT token outputs, we use embeddings explicitly trained for semantic similarity. The model only has to learn to match these high-quality sentence vectors.
-2. **Instance Dropout (0.15)**: During training, we randomly drop 15% of utterances from both patient and interviewer bags, forcing the model to rely on multiple signals rather than memorizing exact utterance combinations.
-3. **Shared projector**: Both roles are mapped to a common low-dimensional space (384→64) through a single shared `Linear + ReLU` layer.
-4. **Parameter-free cross-attention**: The cross-attention uses scaled dot-product directly in the projected space, requiring **zero learnable parameters** and preventing rapid overfitting.
-5. **Residual fusion with LayerNorm**: `LayerNorm(patient + Linear(concat(patient, context)))` provides stable gradient flow and allows ignoring unhelpful context.
+1. **Sentence Embeddings** (`all-mpnet-base-v2` + mean pooling): Instead of raw DistilBERT token outputs, we use embeddings explicitly trained for semantic similarity. The model only has to learn to match these high-quality sentence vectors.
+2. **Embedding Noise Injection**: During training, embedding vectors are augmented with Gaussian noise (`std=0.05`), preventing the projector from memorizing continuous representations.
+3. **Instance Dropout (0.15)**: During training, we randomly drop 15% of utterances from both patient and interviewer bags, forcing the model to rely on multiple signals rather than memorizing exact utterance combinations.
+4. **Shared projector**: Both roles are mapped to a common low-dimensional space (768→64) through a single shared `Linear + ReLU` layer.
+5. **Parameter-free cross-attention**: The cross-attention uses scaled dot-product directly in the projected space, requiring **zero learnable parameters** and preventing rapid overfitting.
+6. **Residual fusion with LayerNorm**: `LayerNorm(patient + Linear(concat(patient, context)))` provides stable gradient flow and allows ignoring unhelpful context.
+7. **Focal Loss**: Replaces BCE to dynamically scale losses based on prediction confidence, heavily pulling the model to learn about hard-to-classify depressive signals and boosting recall.
 
 ### Modules
 
 | Module | Purpose | Learnable Params |
 |--------|---------|-----------------|
-| `Projector` | Shared 384→64 embedding space | ~24.6K |
+| `Projector` | Shared 768→64 embedding space | ~49.2K |
 | `CrossRoleAttention` | Parameter-free scaled dot-product | **0** |
 | `RoleAwareFusion` | Concat + linear + residual + LayerNorm | ~8.3K |
 | `AttentionPooling` | Tanh-based attention pooling | ~4.1K |
 | `Classifier` | Linear 64→1 | 65 |
-| **Total** | | **~37K** |
+| **Total** | | **~61.7K** |
 
 ## Cross-Validation Results
 
@@ -43,19 +45,19 @@ Monte Carlo CV (5 splits × 3 seeds = 15 runs):
 
 | Metric | Mean | Std | 95% CI |
 |--------|------|-----|--------|
-| ROC-AUC | **0.707** | 0.085 | [0.659, 0.754] |
-| PR-AUC | **0.561** | 0.092 | [0.510, 0.612] |
-| Balanced Accuracy | **0.634** | 0.071 | [0.594, 0.673] |
-| Accuracy | **0.659** | 0.102 | [0.603, 0.716] |
-| F1 | 0.490 | 0.110 | [0.429, 0.551] |
-| Recall | 0.570 | 0.213 | [0.452, 0.688] |
-| Precision | 0.477 | 0.118 | [0.412, 0.543] |
+| ROC-AUC | **0.708** | 0.112 | [0.646, 0.770] |
+| PR-AUC | **0.563** | 0.138 | [0.487, 0.639] |
+| Balanced Accuracy | **0.654** | 0.067 | [0.616, 0.691] |
+| Accuracy | **0.629** | 0.149 | [0.546, 0.711] |
+| F1 | **0.545** | 0.065 | [0.509, 0.581] |
+| Recall | **0.715** | 0.188 | [0.611, 0.819] |
+| Precision | **0.485** | 0.143 | [0.406, 0.564] |
 
 ### Comparison with Baselines
 
 | Model | ROC-AUC | PR-AUC | BAcc |
 |-------|---------|--------|------|
-| **DAMIL-R** | **0.707** | **0.561** | **0.634** |
+| **DAMIL-R (Final)** | **0.708** | **0.563** | **0.654** |
 | DAMIL-H | 0.550 | 0.374 | 0.473 |
 | Baseline (Mean Pooling) | 0.574 | 0.347 | 0.552 |
 
@@ -76,14 +78,14 @@ DAMIL-R outperforms DAMIL-H on all ranking metrics, demonstrating that explicitl
 - `CrossRoleAttention` — parameter-free scaled dot-product attention (patient queries interviewer)
 - `RoleAwareFusion` — concatenation + linear projection + residual + LayerNorm
 - `AttentionPooling` — tanh-based learned attention scorer with temperature control
-- `DAMILRClassifier` — wires all modules together, returns logit + both attention weight sets
+- `DAMILRClassifier` — wires all modules together, returns logit + both attention weight sets (now supports input noise injection)
 
 ### Training Layer
 
 **`training/train_damil_r.py`**
 - `DualRoleBagDataset` + `collate_dual_role_bags` — dual-role padding and optional instance dropout augmentation
 - `precompute_dual_role_embeddings()` — Sentence transformer embeddings with mean pooling
-- `train_epoch()` — BCEWithLogitsLoss with class weighting, optional entropy regularization
+- `train_epoch()` — Focal Loss objective, optional entropy regularization, embedding noise pass
 - ReduceLROnPlateau scheduler, val-loss early stopping, threshold tuning on dev
 
 **`training/cv_damil_r.py`**

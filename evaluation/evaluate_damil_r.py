@@ -143,7 +143,7 @@ def main():
                         help="Directory containing best_model.pt and metrics.json")
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Output directory (defaults to model_dir/eval)")
-    parser.add_argument("--encoder_name", type=str, default="sentence-transformers/all-MiniLM-L6-v2")
+    parser.add_argument("--encoder_name", type=str, default="sentence-transformers/all-mpnet-base-v2")
     parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--pooling", type=str, default="mean",
                         choices=["mean", "cls"], help="Embedding pooling strategy.")

@@ -23,6 +23,7 @@ from dataset import load_all_interviews_with_roles
 from models.damil_r import DAMILRClassifier
 from training.train_damil_r import (
     DualRoleBagDataset,
+    FocalLoss,
     collate_dual_role_bags,
     evaluate,
     precompute_dual_role_embeddings,
@@ -46,7 +47,7 @@ def main():
     parser.add_argument("--val_size", type=float, default=0.15)
 
     # Model Config
-    parser.add_argument("--encoder_name", type=str, default="sentence-transformers/all-MiniLM-L6-v2")
+    parser.add_argument("--encoder_name", type=str, default="sentence-transformers/all-mpnet-base-v2")
     parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--pooling", type=str, default="mean",
                         choices=["mean", "cls"], help="Embedding pooling strategy.")
@@ -54,12 +55,16 @@ def main():
                         help="Projection dim before cross-attention. 0 = no projection.")
     parser.add_argument("--att_hidden_dim", type=int, default=32)
     parser.add_argument("--attention_temp", type=float, default=1.0)
+    parser.add_argument("--noise_std", type=float, default=0.05,
+                        help="Gaussian noise std dev for embeddings during training.")
 
     # Training Config
     parser.add_argument("--dropout_rate", type=float, default=0.3)
     parser.add_argument("--instance_dropout", type=float, default=0.15,
                         help="Fraction of utterances to randomly drop during training.")
     parser.add_argument("--entropy_lambda", type=float, default=0.0)
+    parser.add_argument("--loss_type", type=str, default="focal",
+                        choices=["bce", "focal"], help="Loss function to use.")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -157,7 +162,11 @@ def main():
         num_pos = sum(1 for iv in train_data if iv["label"] == 1)
         num_neg = len(train_data) - num_pos
         pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float).to(device)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        
+        if args.loss_type == "focal":
+            criterion = FocalLoss(alpha=pos_weight.item(), gamma=2.0)
+        else:
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
         # Training Loop
         best_score = -float("inf") if args.checkpoint_metric != "val_loss" else float("inf")
@@ -168,6 +177,7 @@ def main():
             tr_loss, _ = train_epoch(
                 model, train_loader, criterion, optimizer, device,
                 entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm,
+                noise_std=args.noise_std,
             )
             v_loss, v_metrics, _ = evaluate(model, val_loader, criterion, device)
             scheduler.step(v_loss)

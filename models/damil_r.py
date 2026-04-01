@@ -223,18 +223,25 @@ class DAMILRClassifier(nn.Module):
         self,
         patient_emb: torch.Tensor,
         interviewer_emb: torch.Tensor,
+        noise_std: float = 0.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass for a single dialogue.
 
         Args:
             patient_emb: Patient turn embeddings of shape (P, embedding_dim).
             interviewer_emb: Interviewer turn embeddings of shape (I, embedding_dim).
+            noise_std: Standard deviation of Gaussian noise to inject during training.
 
         Returns:
             logit: Scalar logit for binary classification.
             cross_attention_weights: Cross-attention matrix of shape (P, I).
             turn_attention_weights: Turn-level attention weights of shape (P,).
         """
+        # Inject embedding noise during training
+        if self.training and noise_std > 0:
+            patient_emb = patient_emb + torch.randn_like(patient_emb) * noise_std
+            interviewer_emb = interviewer_emb + torch.randn_like(interviewer_emb) * noise_std
+
         # Project both roles into shared space
         patient = self.projector(patient_emb)
         interviewer = self.projector(interviewer_emb)
@@ -260,6 +267,7 @@ class DAMILRClassifier(nn.Module):
         interviewer_bags: torch.Tensor,
         patient_sizes: list[int],
         interviewer_sizes: list[int],
+        noise_std: float = 0.0,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
         """Forward pass for a padded batch of dual-role bags.
 
@@ -268,6 +276,7 @@ class DAMILRClassifier(nn.Module):
             interviewer_bags: (batch_size, max_I, embedding_dim).
             patient_sizes: Number of valid patient turns per bag.
             interviewer_sizes: Number of valid interviewer turns per bag.
+            noise_std: Gaussian noise std dev applied to embeddings during training.
 
         Returns:
             logits: Tensor of shape (batch_size,).
@@ -286,7 +295,9 @@ class DAMILRClassifier(nn.Module):
             patient_i = patient_bags[i, :p_n, :]
             interviewer_i = interviewer_bags[i, :i_n, :]
 
-            logit, cross_attn, turn_attn = self.forward(patient_i, interviewer_i)
+            logit, cross_attn, turn_attn = self.forward(
+                patient_i, interviewer_i, noise_std=noise_std
+            )
 
             logits.append(logit)
             cross_attention_list.append(cross_attn)
