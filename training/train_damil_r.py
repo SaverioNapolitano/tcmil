@@ -467,12 +467,18 @@ def generate_attention_report(
                 f.write("Utterance texts not available.\n\n")
                 continue
 
-            # Top patient turns by turn-level attention
-            top_p_indices = np.argsort(turn_attn)[::-1][:n_top]
+            # Top patient turns by turn-level attention (average across heads if multi-head)
+            if turn_attn.ndim > 1:
+                # turn_attn is (num_heads, P)
+                mean_turn_attn = turn_attn.mean(axis=0)
+            else:
+                mean_turn_attn = turn_attn
 
-            f.write(f"### Top-{n_top} Patient Turns (by turn-level attention)\n\n")
+            top_p_indices = np.argsort(mean_turn_attn)[::-1][:n_top]
+
+            f.write(f"### Top-{n_top} Patient Turns (by mean turn-level attention)\n\n")
             for rank, p_idx in enumerate(top_p_indices, 1):
-                f.write(f"**P{p_idx}** (turn_attn={turn_attn[p_idx]:.4f}): {p_utts[p_idx]}\n\n")
+                f.write(f"**P{p_idx}** (mean_attn={mean_turn_attn[p_idx]:.4f}): {p_utts[p_idx]}\n\n")
 
                 # Top interviewer turns this patient turn attends to
                 cross_row = cross_attn[p_idx]
@@ -618,8 +624,8 @@ def main():
     for epoch in range(1, args.max_epochs + 1):
         tr_loss, tr_metrics = train_epoch(
             model, train_loader, criterion, optimizer, device,
-            entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm,
-            noise_std=args.noise_std,
+            entropy_lambda=args.entropy_lambda,
+            max_grad_norm=args.max_grad_norm, noise_std=args.noise_std,
         )
         v_loss, v_metrics, _ = evaluate(model, dev_loader, criterion, device)
         scheduler.step(v_loss)

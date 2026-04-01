@@ -106,11 +106,19 @@ def find_best_threshold(
 def compute_attention_entropy(attention_weights: np.ndarray, eps: float = 1e-9) -> float:
     """Compute the entropy of an attention distribution.
     
+    If the input is 2D, computes the mean entropy across the first dimension 
+    (e.g., across multiple attention heads or rows).
+    
     Args:
-        attention_weights: Array of shape [Num_Utterances] summing to 1.
+        attention_weights: Array of shape [Num_Utterances] or [N, Num_Utterances] summing to 1.
         eps: Small value to avoid log(0).
         
     Returns:
-        Entropy value.
+        Entropy value (or mean entropy).
     """
+    if attention_weights.ndim > 1:
+        # Compute entropy per row and return mean
+        entropies = -np.sum(attention_weights * np.log(attention_weights + eps), axis=-1)
+        return float(np.mean(entropies))
+    
     return float(-np.sum(attention_weights * np.log(attention_weights + eps)))

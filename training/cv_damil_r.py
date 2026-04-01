@@ -176,8 +176,8 @@ def main():
         for epoch in range(1, args.max_epochs + 1):
             tr_loss, _ = train_epoch(
                 model, train_loader, criterion, optimizer, device,
-                entropy_lambda=args.entropy_lambda, max_grad_norm=args.max_grad_norm,
-                noise_std=args.noise_std,
+                entropy_lambda=args.entropy_lambda,
+                max_grad_norm=args.max_grad_norm, noise_std=args.noise_std,
             )
             v_loss, v_metrics, _ = evaluate(model, val_loader, criterion, device)
             scheduler.step(v_loss)

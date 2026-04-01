@@ -114,7 +114,9 @@ def plot_turn_attention_histogram(
     if not all_weights:
         return
 
-    flat_weights = np.concatenate(all_weights)
+    # In multi-head pooling, all_weights[i] is (num_heads, P_i)
+    # We flatten everything to see the total mass distribution across all heads
+    flat_weights = np.concatenate([w.ravel() for w in all_weights])
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
@@ -252,11 +254,19 @@ def generate_cross_attention_report(
         lines.append(f"- Mean cross-attn entropy: {predictions['cross_attention_entropy'][i]:.4f}")
         lines.append(f"- Turn attn entropy: {predictions['turn_attention_entropy'][i]:.4f}")
 
-        # Top patient turns by turn-level attention
-        top_p = np.argsort(turn_attn)[::-1][:top_k_patients]
+        # If multi-head, average across heads for the summary report
+        if turn_attn.ndim > 1:
+            # turn_attn is (num_heads, P)
+            # mean_turn_attn is (P,)
+            mean_turn_attn = turn_attn.mean(axis=0)
+        else:
+            mean_turn_attn = turn_attn
+
+        # Top patient turns by turn-level attention (using mean across heads)
+        top_p = np.argsort(mean_turn_attn)[::-1][:top_k_patients]
         for rank, p_idx in enumerate(top_p, 1):
             p_text = p_texts[p_idx] if p_texts and p_idx < len(p_texts) else f"[turn {p_idx}]"
-            lines.append(f"\n### P{p_idx} (turn_attn={turn_attn[p_idx]:.4f})")
+            lines.append(f"\n### P{p_idx} (mean_turn_attn={mean_turn_attn[p_idx]:.4f})")
             lines.append(f"> {p_text}")
 
             # Top interviewer turns this patient turn attends to

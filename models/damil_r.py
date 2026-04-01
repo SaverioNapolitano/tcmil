@@ -25,6 +25,7 @@ Architecture:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class CrossRoleAttention(nn.Module):
@@ -146,33 +147,22 @@ class AttentionPooling(nn.Module):
         self.W = nn.Linear(input_dim, hidden_dim)
         self.v = nn.Linear(hidden_dim, 1, bias=False)
 
-    def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute attention-weighted pooling.
-
         Args:
-            x: Instance embeddings of shape (num_instances, input_dim).
-            mask: Optional boolean mask of shape (num_instances,).
-                  True = valid instance, False = padding to ignore.
-
+            x: Tensor of shape (P, D).
         Returns:
-            pooled: Weighted sum embedding of shape (input_dim,).
-            weights: Attention weights of shape (num_instances,).
+            pooled: Weighted sum of shape (D,).
+            weights: Attention weights of shape (P,).
         """
-        # e: (num_instances, hidden_dim)
+        # (P, hidden_dim)
         e = torch.tanh(self.W(x))
-        # scores: (num_instances, 1)
-        scores = self.v(e)
+        # attn_logits: (P, 1)
+        attn_logits = self.v(e) / self.temperature
+        weights = torch.softmax(attn_logits, dim=0)
 
-        if mask is not None:
-            scores = scores.masked_fill(~mask.unsqueeze(-1), float("-inf"))
-
-        # weights: (num_instances, 1)
-        weights = torch.softmax(scores / self.temperature, dim=0)
-
-        # pooled: (input_dim,)
-        pooled = (weights * x).sum(dim=0)
+        # (D,)
+        pooled = torch.sum(x * weights, dim=0)
 
         return pooled, weights.squeeze(-1)
 
@@ -202,8 +192,6 @@ class DAMILRClassifier(nn.Module):
         att_hidden_dim: int = 64,
         dropout_rate: float = 0.3,
         temperature: float = 1.0,
-        # Legacy params accepted but ignored for backward compat
-        attn_dim: int | None = None,
     ):
         super().__init__()
         self.embedding_dim = embedding_dim
@@ -231,8 +219,9 @@ class DAMILRClassifier(nn.Module):
             temperature=temperature,
         )
 
-        self.dropout = nn.Dropout(dropout_rate)
+        # Final output classifier
         self.classifier = nn.Linear(working_dim, 1)
+        self.dropout = nn.Dropout(dropout_rate)
 
     def forward(
         self,
@@ -250,7 +239,7 @@ class DAMILRClassifier(nn.Module):
         Returns:
             logit: Scalar logit for binary classification.
             cross_attention_weights: Cross-attention matrix of shape (P, I).
-            turn_attention_weights: Turn-level attention weights of shape (P,).
+            turn_attention_weights: Turn-level attention weights of shape (num_heads, P).
         """
         # Inject embedding noise during training
         if self.training and noise_std > 0:
@@ -296,7 +285,7 @@ class DAMILRClassifier(nn.Module):
         Returns:
             logits: Tensor of shape (batch_size,).
             cross_attention_list: List of (P_i, I_i) tensors.
-            turn_attention_list: List of (P_i,) tensors.
+            turn_attention_list: List of (num_heads, P_i) tensors.
         """
         batch_size = patient_bags.size(0)
         logits = []

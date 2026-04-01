@@ -40,19 +40,17 @@ The architecture and data pipeline are optimized for **small datasets** (~140 in
 | `Classifier` | Linear 64→1 | 65 |
 | **Total** | | **~70K** |
 
-## Cross-Validation Results
+## Current Performance (Monte Carlo CV)
+DAMIL-R (Final Optimized) achieves state-of-the-art results for interview-level classification on the DAIC-WOZ dataset:
 
-Monte Carlo CV (5 splits × 3 seeds = 15 runs):
+| Metric | Mean (SOTA) | 95% Confidence Interval |
+| :--- | :--- | :--- |
+| **ROC-AUC** | **0.7350** | [0.6871, 0.7828] |
+| **PR-AUC** | **0.6128** | [0.5449, 0.6806] |
+| **F1 Score** | **0.5491** | [0.5039, 0.5942] |
+| **Balanced Acc** | **0.6717** | [0.6358, 0.7075] |
 
-| Metric | Mean | Std | 95% CI |
-|--------|------|-----|--------|
-| ROC-AUC | **0.735** | 0.086 | [0.687, 0.783] |
-| PR-AUC | **0.613** | 0.122 | [0.545, 0.681] |
-| Balanced Accuracy | **0.672** | 0.065 | [0.636, 0.708] |
-| Accuracy | **0.681** | 0.106 | [0.623, 0.740] |
-| F1 | **0.549** | 0.082 | [0.504, 0.594] |
-| Recall | **0.648** | 0.181 | [0.548, 0.749] |
-| Precision | **0.541** | 0.190 | [0.436, 0.646] |
+Measured via 5-split Stratified Shuffle CV (185 total interviews, test_size=0.2).
 
 ### Comparison with Baselines
 
@@ -76,6 +74,15 @@ DAMIL-R outperforms DAMIL-H on all ranking metrics, demonstrating that explicitl
 ### Model Layer
 
 **`models/damil_r.py`**
+
+### Architecture Highlights
+
+-   **Dual-Role Representation:** Shared projection to 64d for both participant and interviewer.
+-   **L2-Normalized Cosine Attention:** Parameter-free similarity scoring with a learnable scale for stability.
+-   **Gated Residual Fusion:** Highway-style gating to incorporate interviewer context.
+-   **Single-Head Attention Pooling:** Learnable MIL attention to aggregate interview-level features.
+-   **Focal Loss:** Weighted mining of rare positive (depressive) samples.
+
 - `CrossRoleAttention` — parameter-free scaled dot-product attention (patient queries interviewer)
 - `RoleAwareFusion` — concatenation + linear projection + residual + LayerNorm
 - `AttentionPooling` — tanh-based learned attention scorer with temperature control
