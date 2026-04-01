@@ -119,13 +119,24 @@ def main():
     def train_eval_fn(train_pool, test_set, run_seed):
         set_seed(run_seed)
 
-        # Split train_pool into internal train and val
-        labels_pool = [iv["label"] for iv in train_pool]
-        sss = StratifiedShuffleSplit(n_splits=1, test_size=args.val_size, random_state=run_seed)
-        train_idx, val_idx = next(sss.split(np.zeros(len(labels_pool)), labels_pool))
+        # 1. Subject-level stratified split for internal validation
+        subj_map = {}
+        for iv in train_pool:
+            sid = iv["interview_id"]
+            if sid not in subj_map:
+                subj_map[sid] = iv["label"]
+        
+        u_sids = sorted(list(subj_map.keys()))
+        u_labels = [subj_map[sid] for sid in u_sids]
 
-        train_data = [train_pool[i] for i in train_idx]
-        val_data = [train_pool[i] for i in val_idx]
+        sss = StratifiedShuffleSplit(n_splits=1, test_size=args.val_size, random_state=run_seed)
+        u_train_idx, u_val_idx = next(sss.split(np.zeros(len(u_labels)), u_labels))
+
+        train_sids = set(u_sids[i] for i in u_train_idx)
+        val_sids = set(u_sids[i] for i in u_val_idx)
+
+        train_data = [iv for iv in train_pool if iv["interview_id"] in train_sids]
+        val_data = [iv for iv in train_pool if iv["interview_id"] in val_sids]
 
         train_ds = DualRoleBagDataset(train_data, instance_dropout=args.instance_dropout)
         val_ds = DualRoleBagDataset(val_data)

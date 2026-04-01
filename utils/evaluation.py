@@ -19,31 +19,36 @@ def run_monte_carlo_cv(
     test_size: float = 0.2,
     random_state: int = 42,
 ) -> tuple[dict[str, dict[str, float]], list[dict]]:
-    """Run Repeated Stratified Monte Carlo Cross Validation.
+    """Run Repeated Stratified Monte Carlo Cross Validation at the Subject Level.
 
-    For each split, the data is partitioned into a training pool and a hold-out test set.
-    The true test set is strictly preserved and never leaked.
-
-    The user-provided `train_eval_fn` is responsible for:
-      1. Internally carving out a validaton set from the training pool (if doing early stopping).
-      2. Training the model using the provided random seed.
-      3. Returning a dictionary of metrics computed STRICTLY on the test set.
+    For each split, unique subjects are partitioned into a training pool and a hold-out test set.
+    This strictly enforces speaker independence, even if a speaker has multiple interviews.
 
     Args:
         interviews: List of all interviews (train + dev + test combined).
         train_eval_fn: Callback function `fn(train_pool, test_set, seed) -> metrics_dict`.
         n_splits: Number of random monte carlo splits to generate.
         n_seeds_per_split: Number of independent training runs per split.
-        test_size: Proportion of data to hold out for the test set.
-        random_state: Seed for the StratifiedShuffleSplit generator.
+        test_size: Proportion of unique subjects to hold out for the test set.
+        random_state: Base seed for the random weight generation.
 
     Returns:
         A tuple:
         - Aggregated metrics (mean, std, 95% CI)
         - List of all raw metric dictionaries from every run
     """
-    labels = [iv["label"] for iv in interviews]
+    # 1. Identify unique subjects and their labels for stratification
+    subject_map = {}
+    for iv in interviews:
+        sid = iv["interview_id"]
+        label = iv["label"]
+        if sid not in subject_map:
+            subject_map[sid] = label
     
+    unique_sids = sorted(list(subject_map.keys()))
+    unique_labels = [subject_map[sid] for sid in unique_sids]
+
+    # 2. Setup StratifiedShuffleSplit on unique subjects
     cv = StratifiedShuffleSplit(
         n_splits=n_splits, 
         test_size=test_size, 
@@ -53,34 +58,35 @@ def run_monte_carlo_cv(
     all_raw_metrics = []
     
     print(f"\n={ '='*70 }=")
-    print(f" Starting Monte Carlo CV")
-    print(f" Splits: {n_splits}, Seeds per split: {n_seeds_per_split}, Test size: {test_size}")
+    print(f" Starting Subject-Level Monte Carlo CV")
+    print(f" Unique Subjects: {len(unique_sids)}")
+    print(f" Splits: {n_splits}, Seeds/Split: {n_seeds_per_split}, Test size: {test_size:.1%}")
     print(f" Total training runs: {n_splits * n_seeds_per_split}")
     print(f"={ '='*70 }=")
 
-    for split_idx, (train_idx, test_idx) in enumerate(cv.split(np.zeros(len(labels)), labels)):
-        train_pool = [interviews[i] for i in train_idx]
-        test_set = [interviews[i] for i in test_idx]
-        
-        print(f"\n─── Split {split_idx + 1}/{n_splits} ───")
-        print(f"Train pool size: {len(train_pool)}")
-        print(f"Test set size: {len(test_set)}")
+    # 3. Execute splits
+    for split_idx, (train_subj_idx, test_subj_idx) in enumerate(cv.split(np.zeros(len(unique_labels)), unique_labels), 1):
+        train_sids = set(unique_sids[i] for i in train_subj_idx)
+        test_sids = set(unique_sids[i] for i in test_subj_idx)
+
+        # Map back to full records
+        train_pool = [iv for iv in interviews if iv["interview_id"] in train_sids]
+        test_set = [iv for iv in interviews if iv["interview_id"] in test_sids]
+
+        print(f"\n─── Split {split_idx}/{n_splits} ───")
+        print(f"Train subjects: {len(train_sids)}, Records: {len(train_pool)}")
+        print(f"Test subjects: {len(test_sids)}, Records: {len(test_set)}")
 
         for seed_idx in range(n_seeds_per_split):
-            # Deterministic but varied seed for each run
             run_seed = random_state + (split_idx * 100) + seed_idx
+            print(f"\n  [Split {split_idx}, Run {seed_idx+1}/{n_seeds_per_split}] Seed = {run_seed}")
             
-            print(f"\n  [Split {split_idx + 1}, Run {seed_idx + 1}/{n_seeds_per_split}] Seed = {run_seed}")
-            
-            # The callback must do all the heavy lifting:
-            # feature extraction, inner-validation splitting, training, and testing.
             metrics = train_eval_fn(train_pool, test_set, run_seed)
             
-            # Store metadata with the run
+            # Store run metadata
             metrics["_split_idx"] = split_idx
             metrics["_seed_idx"] = seed_idx
             metrics["_run_seed"] = run_seed
-            
             all_raw_metrics.append(metrics)
             
             # Print a quick summary of this run's primary metrics
@@ -88,6 +94,7 @@ def run_monte_carlo_cv(
             bacc = metrics.get('balanced_accuracy', 0.0)
             print(f"  -> Result: F1={f1:.4f}, B.Acc={bacc:.4f}")
 
+    # 4. Aggregation
     print("\nAggregating results across all runs...")
     agg_metrics = compute_aggregate_metrics(all_raw_metrics)
     
