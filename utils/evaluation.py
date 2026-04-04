@@ -6,9 +6,11 @@ with multiple random seeds per split, for stable and trustworthy evaluation.
 
 from typing import Callable, Any
 import numpy as np
-from sklearn.model_selection import StratifiedShuffleSplit, StratifiedGroupKFold
+import torch
+from sklearn.model_selection import StratifiedShuffleSplit, StratifiedGroupKFold, LeaveOneGroupOut
 
-from utils.stats import compute_aggregate_metrics
+from utils.stats import compute_aggregate_metrics, compute_bootstrap_metrics
+from utils.metrics import compute_metrics
 
 
 def run_monte_carlo_cv(
@@ -170,4 +172,122 @@ def run_stratified_group_k_fold(
 
     # Aggregation
     agg_metrics = compute_aggregate_metrics(all_raw_metrics)
+    return agg_metrics, all_raw_metrics
+
+
+def run_leave_one_subject_out_cv(
+    interviews: list[dict[str, Any]],
+    train_eval_fn: Callable[[list[dict], list[dict], int], dict[str, Any]],
+    n_seeds_per_fold: int = 1,
+    random_state: int = 42,
+) -> tuple[dict[str, dict[str, float]], list[dict]]:
+    """Run Leave-One-Subject-Out (LOSO) Cross Validation.
+
+    Each unique subject is used as the test set exactly once.
+    The model is trained on all other subjects.
+    Metrics are computed on the pooled predictions across all folds.
+
+    Args:
+        interviews: List of all interviews.
+        train_eval_fn: Callback function `fn(train_pool, test_set, seed)`.
+                       For LOSO, this should return a dict containing 'true_label' and 'probability'
+                       along with any other metrics.
+        n_seeds_per_fold: Number of seeds to run per subject for stability.
+        random_state: Base seed for reproducibility.
+
+    Returns:
+        A tuple:
+        - Aggregated metrics (based on pooled predictions)
+        - List of all raw metric dictionaries
+    """
+    labels = [iv["label"] for iv in interviews]
+    groups = [iv["interview_id"] for iv in interviews]
+    unique_groups = sorted(list(set(groups)))
+    
+    cv = LeaveOneGroupOut()
+
+    all_raw_metrics = []
+    
+    print(f"\n={ '='*70 }=")
+    print(f" Starting Leave-One-Subject-Out CV")
+    print(f" Total Subjects (Folds): {len(unique_groups)}, Seeds/Fold: {n_seeds_per_fold}")
+    print(f" Total training runs: {len(unique_groups) * n_seeds_per_fold}")
+    print(f"={ '='*70 }=")
+
+    # Convert to numpy for indexing
+    ivs_np = np.array(interviews)
+
+    # To compute pooled metrics per seed
+    seed_predictions = {seed_idx: {"y_true": [], "y_prob": []} for seed_idx in range(n_seeds_per_fold)}
+
+    for fold_idx, (train_idx, test_idx) in enumerate(cv.split(ivs_np, labels, groups), 1):
+        train_pool = ivs_np[train_idx].tolist()
+        test_set = ivs_np[test_idx].tolist()
+
+        test_sid = unique_groups[fold_idx - 1]
+        print(f"\n─── Fold {fold_idx}/{len(unique_groups)} (Subject: {test_sid}) ───")
+        print(f"Train subjects: {len(unique_groups)-1}, Records: {len(train_pool)}")
+        print(f"Test records: {len(test_set)}")
+
+        for seed_idx in range(n_seeds_per_fold):
+            run_seed = random_state + (fold_idx * 100) + seed_idx
+            print(f"  [Run {seed_idx+1}/{n_seeds_per_fold}] Seed = {run_seed}")
+            
+            # The train_eval_fn is expected to return results for the test_set (1 subject)
+            results = train_eval_fn(train_pool, test_set, run_seed)
+            
+            # Support both returning metrics only or full results
+            # For LOSO, we NEED predictions to aggregate.
+            # Assuming 'evaluate' returns a dict with 'true_label' and 'probability'
+            # if they are lists (from multiple records of the same subject), we extend.
+            
+            if "true_label" in results and "probability" in results:
+                y_true = results["true_label"]
+                y_prob = results["probability"]
+                if not isinstance(y_true, list): y_true = [y_true]
+                if not isinstance(y_prob, list): y_prob = [y_prob]
+                
+                seed_predictions[seed_idx]["y_true"].extend(y_true)
+                seed_predictions[seed_idx]["y_prob"].extend(y_prob)
+
+            # Store run metadata
+            results["_fold_idx"] = fold_idx
+            results["_seed_idx"] = seed_idx
+            results["_run_seed"] = run_seed
+            all_raw_metrics.append(results)
+
+    # Compute pooled metrics and Bootstrap CIs for each seed
+    seed_bootstrap_results = []
+    for seed_idx in range(n_seeds_per_fold):
+        y_true = np.array(seed_predictions[seed_idx]["y_true"])
+        y_prob = np.array(seed_predictions[seed_idx]["y_prob"])
+        
+        label_dist = f"pos={np.sum(y_true==1)}, neg={np.sum(y_true==0)}"
+        print(f"  [Seed {seed_idx}] Computing Bootstrap CIs (N=2000)... ({label_dist})")
+        
+        boot_metrics = compute_bootstrap_metrics(
+            y_true, y_prob, metric_fn=compute_metrics, n_resamples=2000, seed=random_state + seed_idx
+        )
+        seed_bootstrap_results.append(boot_metrics)
+
+    # Final aggregation: average the bootstrap statistics across seeds
+    # This is more robust as it combines subject-level uncertainty with seed stability.
+    print("\nAggregating Bootstrap results across seeds...")
+    
+    metric_keys = list(seed_bootstrap_results[0].keys())
+    agg_metrics = {}
+    
+    for key in metric_keys:
+        means = [res[key]["mean"] for res in seed_bootstrap_results]
+        lowers = [res[key]["ci_lower"] for res in seed_bootstrap_results]
+        uppers = [res[key]["ci_upper"] for res in seed_bootstrap_results]
+        stds = [res[key].get("std", 0.0) for res in seed_bootstrap_results]
+        
+        agg_metrics[key] = {
+            "mean": float(np.mean(means)),
+            "std": float(np.mean(stds)),
+            "ci_lower": float(np.mean(lowers)),
+            "ci_upper": float(np.mean(uppers)),
+        }
+    
     return agg_metrics, all_raw_metrics

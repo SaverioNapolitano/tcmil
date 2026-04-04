@@ -30,7 +30,7 @@ from training.train_damil_r import (
     set_seed,
     train_epoch,
 )
-from utils.evaluation import run_monte_carlo_cv, run_stratified_group_k_fold
+from utils.evaluation import run_monte_carlo_cv, run_stratified_group_k_fold, run_leave_one_subject_out_cv
 from utils.metrics import find_best_threshold
 from utils.stats import format_aggregate_report
 
@@ -41,8 +41,8 @@ def main():
     parser.add_argument("--output_dir", type=str, default="results/damil_r_cv")
 
     # CV Strategy Config
-    parser.add_argument("--mode", type=str, default="mc", choices=["mc", "kfold"],
-                        help="CV mode: mc (Monte Carlo) or kfold (Stratified Group K-Fold)")
+    parser.add_argument("--mode", type=str, default="mc", choices=["mc", "kfold", "loso"],
+                        help="CV mode: mc (Monte Carlo), kfold (Stratified Group K-Fold), or loso (Leave-One-Subject-Out)")
     parser.add_argument("--n_folds", type=int, default=5,
                         help="Number of folds for kfold mode.")
     parser.add_argument("--n_splits", type=int, default=5)
@@ -225,11 +225,12 @@ def main():
         )
 
         # Final test evaluation
-        _, test_metrics, _ = evaluate(model, test_loader, criterion, device, threshold=best_t)
+        _, test_metrics, test_results = evaluate(model, test_loader, criterion, device, threshold=best_t)
 
         # Cleanup
         checkpoint_path.unlink(missing_ok=True)
-        return test_metrics
+        # Return merged dict for LOSO aggregation if needed
+        return {**test_metrics, **test_results}
 
     # --- Run CV ---
     if args.mode == "mc":
@@ -241,7 +242,7 @@ def main():
             test_size=args.test_size,
             random_state=args.seed,
         )
-    else:
+    elif args.mode == "kfold":
         agg_metrics, raw_metrics = run_stratified_group_k_fold(
             interviews=all_interviews,
             train_eval_fn=train_eval_fn,
@@ -249,15 +250,33 @@ def main():
             n_seeds_per_fold=args.n_seeds,
             random_state=args.seed,
         )
+    else:
+        agg_metrics, raw_metrics = run_leave_one_subject_out_cv(
+            interviews=all_interviews,
+            train_eval_fn=train_eval_fn,
+            n_seeds_per_fold=args.n_seeds,
+            random_state=args.seed,
+        )
 
     # --- Save Results ---
-    out_name = "kfold_results.json" if args.mode == "kfold" else "cv_results.json"
+    def numpy_default(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.generic):
+            return obj.item()
+        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+    if args.mode == "loso":
+        out_name = "loso_results.json"
+    else:
+        out_name = "kfold_results.json" if args.mode == "kfold" else "cv_results.json"
     with open(out_dir / out_name, "w") as f:
-        json.dump({"aggregate": agg_metrics, "raw": raw_metrics}, f, indent=4)
+        json.dump({"aggregate": agg_metrics, "raw": raw_metrics}, f, indent=4, default=numpy_default)
 
     report = format_aggregate_report(agg_metrics)
     with open(out_dir / "cv_report.txt", "w") as f:
-        f.write("# DAMIL-R Monte Carlo CV Results\n\n")
+        title = "DAMIL-R LOSO CV Results" if args.mode == "loso" else "DAMIL-R Monte Carlo CV Results"
+        f.write(f"# {title}\n\n")
         f.write(report)
 
     logger.info("\n" + report)

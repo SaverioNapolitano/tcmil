@@ -23,7 +23,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from dataset import load_all_interviews_with_roles, TokenizedDualRoleBagDataset, collate_lora_bags
 from models.damil_r_lora import DAMILRLora
-from utils.evaluation import run_monte_carlo_cv, run_stratified_group_k_fold
+from utils.evaluation import run_monte_carlo_cv, run_stratified_group_k_fold, run_leave_one_subject_out_cv
 from utils.metrics import compute_metrics, find_best_threshold
 from utils.stats import format_aggregate_report
 
@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--output_dir", type=str, default="results/damil_r_lora_cv")
     
     # CV Strategy Config
-    parser.add_argument("--mode", type=str, default="kfold", choices=["mc", "kfold"])
+    parser.add_argument("--mode", type=str, default="kfold", choices=["mc", "kfold", "loso"])
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--n_seeds", type=int, default=3)
@@ -197,13 +197,21 @@ def main():
         y_true = np.array(t_labels)
         y_prob = np.array(t_probs)
         y_pred = (y_prob >= t_best_fold).astype(int)
-        return compute_metrics(y_true, y_pred, y_prob)
+        
+        metrics = compute_metrics(y_true, y_pred, y_prob)
+        return {
+            **metrics,
+            "true_label": y_true.tolist(),
+            "probability": y_prob.tolist()
+        }
 
     # 3. Execution
     if args.mode == "mc":
         agg, raw = run_monte_carlo_cv(all_interviews, train_eval_fn, args.n_splits, args.n_seeds, args.test_size, args.seed)
-    else:
+    elif args.mode == "kfold":
         agg, raw = run_stratified_group_k_fold(all_interviews, train_eval_fn, args.n_folds, args.n_seeds, args.seed)
+    else:
+        agg, raw = run_leave_one_subject_out_cv(all_interviews, train_eval_fn, args.n_seeds, args.seed)
 
     # 4. Report
     with open(out_dir / f"{args.mode}_results.json", "w") as f:

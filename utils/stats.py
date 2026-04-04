@@ -201,3 +201,80 @@ def format_comparison_report(comp_metrics: dict[str, dict[str, float]], method_a
         
     return "\n".join(lines)
 
+
+def compute_bootstrap_metrics(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    metric_fn: callable,
+    n_resamples: int = 2000,
+    confidence_level: float = 0.95,
+    seed: int = 42,
+) -> dict[str, dict[str, float]]:
+    """Compute confidence intervals for metrics using bootstrap resampling.
+
+    This provides an estimate of generalization uncertainty across the 
+    sample population (subjects), which is more meaningful in LOSO CV 
+    than seed-based variability.
+
+    Args:
+        y_true: Ground truth binary labels.
+        y_prob: Predicted probabilities.
+        metric_fn: Function that takes (y_true, y_pred, y_prob) and returns a dict of metrics.
+        n_resamples: Number of bootstrap resamples.
+        confidence_level: Confidence level (e.g., 0.95 for 95%).
+        seed: Random seed for reproducibility.
+
+    Returns:
+        Dictionary mapping each metric name to its bootstrap statistics:
+            {"f1": {"mean": 0.5, "std": 0.05, "ci_lower": 0.45, "ci_upper": 0.55}, ...}
+    """
+    rng = np.random.default_rng(seed)
+    n_samples = len(y_true)
+    
+    # Store results for each bootstrap sample
+    bootstrap_results = []
+    
+    # The 'mean' performance is the one on the full original sample
+    y_pred_orig = (y_prob >= 0.5).astype(int)
+    original_metrics = metric_fn(y_true, y_pred_orig, y_prob)
+    
+    for _ in range(n_resamples):
+        # Resample indices with replacement
+        indices = rng.choice(n_samples, size=n_samples, replace=True)
+        
+        y_true_resampled = y_true[indices]
+        y_prob_resampled = y_prob[indices]
+        y_pred_resampled = (y_prob_resampled >= 0.5).astype(int)
+        
+        # Calculate metrics for this resample
+        resampled_metrics = metric_fn(y_true_resampled, y_pred_resampled, y_prob_resampled)
+        bootstrap_results.append(resampled_metrics)
+        
+    final_results = {}
+    metric_keys = original_metrics.keys()
+    
+    alpha = 1.0 - confidence_level
+    lower_p = (alpha / 2.0) * 100
+    upper_p = (1.0 - alpha / 2.0) * 100
+    
+    for key in metric_keys:
+        if not isinstance(original_metrics[key], (int, float)) or np.isnan(original_metrics[key]):
+            continue
+            
+        # Filter out NaNs (e.g., ROC-AUC if a resample has only one class)
+        resampled_values = [r[key] for r in bootstrap_results if not np.isnan(r.get(key, np.nan))]
+        if not resampled_values:
+            continue
+            
+        ci_lower = np.percentile(resampled_values, lower_p)
+        ci_upper = np.percentile(resampled_values, upper_p)
+        
+        final_results[key] = {
+            "mean": original_metrics[key],
+            "std": float(np.std(resampled_values, ddof=1)) if len(resampled_values) > 1 else 0.0,
+            "ci_lower": float(ci_lower),
+            "ci_upper": float(ci_upper),
+        }
+        
+    return final_results
+
