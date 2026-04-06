@@ -11,6 +11,12 @@ from torch.utils.data import Dataset
 # Column name for binary label differs between train/dev and test splits
 _LABEL_COL = {"train": "PHQ8_Binary", "dev": "PHQ8_Binary", "test": "PHQ_Binary"}
 
+# PHQ-8 individual symptom components (only present in train/dev)
+_SYMPTOM_COLS = [
+    "PHQ8_NoInterest", "PHQ8_Depressed", "PHQ8_Sleep", "PHQ8_Tired",
+    "PHQ8_Appetite", "PHQ8_Failure", "PHQ8_Concentrating", "PHQ8_Moving"
+]
+
 
 def load_interviews(
     data_dir: str | Path,
@@ -202,11 +208,30 @@ def load_interviews_with_roles(
             if text and text.lower() != "nan":
                 interviewer_utterances.append(text)
 
+        # Symptom indicators (0-3 Ordinal)
+        symptoms = []
+        has_symptoms = all(col in labels_df.columns for col in _SYMPTOM_COLS)
+        if has_symptoms:
+            row = labels_df[labels_df["Participant_ID"] == pid].iloc[0]
+            for col in _SYMPTOM_COLS:
+                val = row[col]
+                if pd.isna(val):
+                    has_symptoms = False
+                    break
+                symptoms.append(float(val))
+            
+            if not has_symptoms:
+                symptoms = [0.0] * len(_SYMPTOM_COLS)
+        else:
+            symptoms = [0.0] * len(_SYMPTOM_COLS)
+
         interviews.append({
             "interview_id": int(pid),
             "label": int(label),
             "utterances": utterances,
             "interviewer_utterances": interviewer_utterances,
+            "symptoms": symptoms,
+            "has_symptoms": has_symptoms,
         })
 
     return interviews
@@ -277,6 +302,8 @@ class DualRoleBagDataset(Dataset):
             "interviewer_bag": interviewer_bag,
             "label": torch.tensor(item["label"], dtype=torch.float),
             "interview_id": item["interview_id"],
+            "symptoms": torch.tensor(item.get("symptoms", [0]*8), dtype=torch.float),
+            "has_symptoms": torch.tensor(1.0 if item.get("has_symptoms", False) else 0.0, dtype=torch.float),
             "utterances": item.get("utterances", []),
             "interviewer_utterances": item.get("interviewer_utterances", []),
         }
@@ -311,6 +338,8 @@ def collate_dual_role_bags(batch):
         "patient_sizes": patient_sizes,
         "interviewer_sizes": interviewer_sizes,
         "labels": labels,
+        "symptoms": torch.stack([item["symptoms"] for item in batch]),
+        "has_symptoms": torch.stack([item["has_symptoms"] for item in batch]),
         "interview_ids": ids,
         "utterances_lists": utts,
         "interviewer_utterances_lists": int_utts,

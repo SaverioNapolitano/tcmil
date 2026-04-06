@@ -26,6 +26,10 @@ def compute_metrics(
     Returns:
         Dictionary with all metric values.
     """
+    # Ensure everything is finite before passing to sklearn
+    if not np.all(np.isfinite(y_prob)):
+        return {k: float("nan") for k in ["accuracy", "balanced_accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc"]}
+
     metrics = {
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
