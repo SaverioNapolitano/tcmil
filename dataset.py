@@ -274,6 +274,104 @@ def load_all_interviews_with_roles(data_dir: str | Path, use_raw_data: bool = Fa
     return all_interviews
 
 
+def load_all_interviews_dialogue_pairs(data_dir: str | Path) -> list[dict]:
+    """Load all interviews with Q-A dialogue pairs from raw transcripts.
+
+    Uses preprocess_raw.py to parse raw DAIC-WOZ transcripts, merge consecutive
+    same-speaker turns, and create Question-Answer dialogue pairs. This gives the
+    sentence encoder crucial context about what topic each participant response
+    addresses.
+
+    Args:
+        data_dir: Path to the data directory (must contain 'raw/' and 'labels/' subdirectories).
+
+    Returns:
+        A list of interview dictionaries with keys:
+        - interview_id: int
+        - label: int (0 or 1)
+        - qa_pairs: list[str] (Q-A dialogue pair strings)
+        - interviewer_utterances: list[str] (Ellie-only utterances)
+        - utterances: list[str] (participant-only utterances, for backward compat)
+        - symptoms: list[float] (8 PHQ-8 symptom scores)
+        - has_symptoms: bool
+    """
+    from preprocess_raw import process_all_transcripts
+
+    data_dir = Path(data_dir)
+
+    # Collect all participant IDs and labels across splits
+    label_files = {
+        "train": ("train_split_Depression_AVEC2017.csv", "PHQ8_Binary"),
+        "dev": ("dev_split_Depression_AVEC2017.csv", "PHQ8_Binary"),
+        "test": ("full_test_split.csv", "PHQ_Binary"),
+    }
+
+    id_to_label = {}
+    all_label_dfs = {}
+
+    for split, (filename, label_col) in label_files.items():
+        label_path = data_dir / "labels" / filename
+        try:
+            df = pd.read_csv(label_path)
+            all_label_dfs[split] = df
+            for _, row in df.iterrows():
+                pid = int(row["Participant_ID"])
+                label = int(row[label_col])
+                id_to_label[pid] = label
+        except Exception as e:
+            print(f"Warning: Could not load labels for '{split}': {e}")
+
+    # Process all raw transcripts
+    all_pids = sorted(id_to_label.keys())
+    print(f"Processing {len(all_pids)} raw transcripts for dialogue pairs...")
+    processed = process_all_transcripts(data_dir, all_pids)
+
+    # Build interview list with symptom info
+    interviews = []
+    for pid in all_pids:
+        if pid not in processed:
+            continue
+
+        proc = processed[pid]
+        label = id_to_label[pid]
+
+        # Get symptom info from the train/dev label files (test doesn't have symptoms)
+        symptoms = [0.0] * len(_SYMPTOM_COLS)
+        has_symptoms = False
+
+        for split, df in all_label_dfs.items():
+            if split == "test":
+                continue
+            match = df[df["Participant_ID"] == pid]
+            if len(match) > 0 and all(col in df.columns for col in _SYMPTOM_COLS):
+                row = match.iloc[0]
+                sym_vals = []
+                valid = True
+                for col in _SYMPTOM_COLS:
+                    val = row[col]
+                    if pd.isna(val):
+                        valid = False
+                        break
+                    sym_vals.append(float(val))
+                if valid:
+                    symptoms = sym_vals
+                    has_symptoms = True
+                break
+
+        interviews.append({
+            "interview_id": pid,
+            "label": label,
+            "qa_pairs": proc["qa_pairs"],
+            "interviewer_utterances": proc["interviewer_utterances"],
+            "utterances": proc["participant_utterances"],
+            "symptoms": symptoms,
+            "has_symptoms": has_symptoms,
+        })
+
+    print(f"\nLoaded {len(interviews)} total interviews with dialogue pairs.")
+    return interviews
+
+
 # ---------------------------------------------------------------------------
 # Datasets and Collation
 # ---------------------------------------------------------------------------

@@ -1634,3 +1634,240 @@ class SSDamilRClassifierV13(nn.Module):
             div_losses.append(div_loss)
 
         return torch.stack(pooled_list), torch.stack(div_losses).mean()
+
+
+class SSDamilRClassifierV14(nn.Module):
+    """v14: Dialogue-Aware Depression Detection.
+
+    Identical to SSDamilRClassifierV9 but configured for:
+    - Larger encoder output (1024-dim from BAAI/bge-large-en-v1.5)
+    - Larger projection dimension (128) to leverage richer features
+    - Q-A dialogue pair embeddings as patient instances
+
+    The architecture is deliberately kept very close to the proven v9d
+    configuration. The performance improvement comes from the input quality
+    (dialogue-pair preprocessing + upgraded encoder), not from architectural
+    changes.
+
+    Architecture:
+    - Backbone: DAMIL-R (Cross-Role Attention + Gated Fusion)
+    - Pooling: Multi-Head Attention Pooling (2 heads) with diversity loss
+    - Symptom Head: MLP predicting 8 PHQ symptoms (auxiliary)
+    - Gated Symptom Injection: symptom predictions projected and gated
+    - Main Head: Linear classifier
+    """
+
+    def __init__(
+        self,
+        embedding_dim: int = 1024,
+        proj_dim: int = 128,
+        num_symptoms: int = 8,
+        dropout_rate: float = 0.3,
+        temperature: float = 1.0,
+        n_pool_heads: int = 2,
+    ):
+        super().__init__()
+        self.num_symptoms = num_symptoms
+        self.working_dim = proj_dim if (proj_dim and proj_dim > 0) else embedding_dim
+
+        # 1. Projector
+        if proj_dim and proj_dim > 0:
+            self.projector = nn.Sequential(
+                nn.Linear(embedding_dim, proj_dim),
+                nn.ReLU(),
+            )
+        else:
+            self.projector = nn.Identity()
+
+        # 2-3. Role Interaction (Backbone)
+        self.cross_attention = CrossRoleAttention(dim=self.working_dim)
+        self.fusion = RoleAwareFusion(dim=self.working_dim)
+        self.post_fusion_norm = nn.LayerNorm(self.working_dim)
+
+        # 4. Multi-Head Attention Pooling
+        self.pooling = MultiHeadAttentionPooling(
+            input_dim=self.working_dim,
+            hidden_dim=64,  # Slightly larger hidden dim for richer features
+            n_heads=n_pool_heads,
+            temperature=temperature,
+        )
+
+        # 5. Symptom Head (Auxiliary)
+        self.symptom_head = nn.Sequential(
+            nn.Linear(self.working_dim, 32),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(32, num_symptoms),
+        )
+
+        # 6. Gated Symptom Injection
+        self.sym_projector = nn.Sequential(
+            nn.Linear(num_symptoms, self.working_dim),
+            nn.Tanh(),
+        )
+        self.inject_gate = nn.Linear(self.working_dim * 2, self.working_dim)
+        nn.init.constant_(self.inject_gate.bias, 2.0)
+
+        # 7. Main Classifier
+        self.main_classifier = nn.Linear(self.working_dim, 1)
+        self.dropout = nn.Dropout(dropout_rate)
+
+    def forward(
+        self,
+        patient_emb: torch.Tensor,
+        interviewer_emb: torch.Tensor,
+        noise_std: float = 0.0,
+    ) -> dict:
+        # Noise for stability
+        if self.training and noise_std > 0:
+            patient_emb = patient_emb + torch.randn_like(patient_emb) * noise_std
+            interviewer_emb = interviewer_emb + torch.randn_like(interviewer_emb) * noise_std
+
+        # Feature Backbone
+        p_proj = self.projector(patient_emb)
+        i_proj = self.projector(interviewer_emb)
+
+        context, _ = self.cross_attention(p_proj, i_proj)
+        instance_features = self.post_fusion_norm(self.fusion(p_proj, context))
+
+        # Multi-Head Pooling
+        pooled, head_weights, diversity_loss = self.pooling(instance_features)
+
+        # Auxiliary Symptom Predictions
+        sym_logits = self.symptom_head(pooled)
+
+        # Gated Symptom Injection
+        sym_signal = self.sym_projector(sym_logits)
+        gate_input = torch.cat([pooled, sym_signal], dim=0).unsqueeze(0)
+        gate = torch.sigmoid(self.inject_gate(gate_input)).squeeze(0)
+        enriched = gate * pooled + (1.0 - gate) * sym_signal
+
+        # Main Prediction
+        main_h = self.dropout(enriched)
+        main_logit = self.main_classifier(main_h).squeeze(-1)
+
+        return {
+            "logit": main_logit,
+            "symptom_logits": sym_logits,
+            "head_weights": head_weights,
+            "diversity_loss": diversity_loss,
+            "pooled_representation": pooled,
+        }
+
+    def forward_backbone(
+        self,
+        patient_emb: torch.Tensor,
+        interviewer_emb: torch.Tensor,
+        noise_std: float = 0.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the backbone (projector → cross-attention → fusion → pooling).
+
+        Returns:
+            pooled: Pooled bag representation of shape (D,).
+            diversity_loss: Scalar diversity loss from multi-head pooling.
+        """
+        if self.training and noise_std > 0:
+            patient_emb = patient_emb + torch.randn_like(patient_emb) * noise_std
+            interviewer_emb = interviewer_emb + torch.randn_like(interviewer_emb) * noise_std
+
+        p_proj = self.projector(patient_emb)
+        i_proj = self.projector(interviewer_emb)
+
+        context, _ = self.cross_attention(p_proj, i_proj)
+        instance_features = self.post_fusion_norm(self.fusion(p_proj, context))
+
+        pooled, _, diversity_loss = self.pooling(instance_features)
+        return pooled, diversity_loss
+
+    def forward_heads(self, pooled: torch.Tensor) -> dict:
+        """Run the classification heads on a (possibly mixed) pooled representation.
+
+        Args:
+            pooled: Tensor of shape (D,) or (B, D).
+
+        Returns:
+            Dict with 'logit'/'logits' and 'symptom_logits'.
+        """
+        is_batched = pooled.dim() == 2
+
+        sym_logits = self.symptom_head(pooled)
+        sym_signal = self.sym_projector(sym_logits)
+
+        if is_batched:
+            gate_input = torch.cat([pooled, sym_signal], dim=1)
+        else:
+            gate_input = torch.cat([pooled, sym_signal], dim=0).unsqueeze(0)
+
+        gate = torch.sigmoid(self.inject_gate(gate_input))
+        if not is_batched:
+            gate = gate.squeeze(0)
+
+        enriched = gate * pooled + (1.0 - gate) * sym_signal
+
+        main_h = self.dropout(enriched)
+        main_logit = self.main_classifier(main_h).squeeze(-1)
+
+        key = "logits" if is_batched else "logit"
+        return {key: main_logit, "symptom_logits": sym_logits}
+
+    def forward_batch(
+        self,
+        patient_bags: torch.Tensor,
+        interviewer_bags: torch.Tensor,
+        patient_sizes: list[int],
+        interviewer_sizes: list[int],
+        noise_std: float = 0.0,
+    ) -> dict:
+        batch_size = patient_bags.size(0)
+
+        batch_main_logits = []
+        batch_symptom_logits = []
+        batch_diversity_losses = []
+
+        for i in range(batch_size):
+            p_n = patient_sizes[i]
+            i_n = interviewer_sizes[i]
+
+            p_i = patient_bags[i, :p_n, :]
+            i_i = interviewer_bags[i, :i_n, :]
+
+            res = self.forward(p_i, i_i, noise_std=noise_std)
+            batch_main_logits.append(res["logit"])
+            batch_symptom_logits.append(res["symptom_logits"])
+            batch_diversity_losses.append(res["diversity_loss"])
+
+        return {
+            "logits": torch.stack(batch_main_logits),
+            "symptom_logits": torch.stack(batch_symptom_logits),
+            "diversity_loss": torch.stack(batch_diversity_losses).mean(),
+        }
+
+    def forward_batch_split(
+        self,
+        patient_bags: torch.Tensor,
+        interviewer_bags: torch.Tensor,
+        patient_sizes: list[int],
+        interviewer_sizes: list[int],
+        noise_std: float = 0.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run backbone for each sample, return stacked pooled reps + mean diversity loss.
+
+        Returns:
+            pooled_batch: Tensor of shape (B, D).
+            diversity_loss: Scalar mean diversity loss.
+        """
+        batch_size = patient_bags.size(0)
+        pooled_list = []
+        div_losses = []
+
+        for i in range(batch_size):
+            p_n = patient_sizes[i]
+            i_n = interviewer_sizes[i]
+            p_i = patient_bags[i, :p_n, :]
+            i_i = interviewer_bags[i, :i_n, :]
+
+            pooled, div_loss = self.forward_backbone(p_i, i_i, noise_std=noise_std)
+            pooled_list.append(pooled)
+            div_losses.append(div_loss)
+
+        return torch.stack(pooled_list), torch.stack(div_losses).mean()

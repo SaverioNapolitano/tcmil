@@ -273,6 +273,89 @@ def precompute_dual_role_embeddings(
     return processed
 
 
+@torch.no_grad()
+def precompute_dialogue_pair_embeddings(
+    interviews: list[dict],
+    tokenizer,
+    encoder,
+    device,
+    max_len: int = 256,
+    pooling: str = DEFAULT_POOLING,
+    batch_size: int = 16,
+) -> list[dict]:
+    """Pre-compute sentence embeddings for Q-A dialogue pairs and interviewer utterances.
+
+    Similar to precompute_dual_role_embeddings, but uses Q-A dialogue pairs
+    (question + answer concatenated) as the patient instances instead of
+    individual participant utterances. This gives the encoder crucial context
+    about what topic each response addresses.
+
+    Args:
+        interviews: List of interview dicts with 'qa_pairs' and 'interviewer_utterances'.
+        tokenizer: HuggingFace tokenizer.
+        encoder: HuggingFace transformer model.
+        device: Torch device.
+        max_len: Maximum token length for truncation (higher than default
+                 since Q-A pairs are longer than individual utterances).
+        pooling: Pooling strategy ('cls' or 'mean').
+        batch_size: Batch size for encoding (to handle longer Q-A texts).
+
+    Returns:
+        Enriched interview list with 'patient_embeddings' and 'interviewer_embeddings' tensors.
+    """
+    encoder.eval()
+    processed = []
+
+    def _encode_texts(texts: list[str]) -> torch.Tensor:
+        """Encode a list of texts into embeddings, batching if needed."""
+        all_embs = []
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i : i + batch_size]
+            encoded = tokenizer(
+                batch_texts,
+                padding=True,
+                truncation=True,
+                max_length=max_len,
+                return_tensors="pt",
+            ).to(device)
+
+            output = encoder(**encoded)
+            if pooling == "mean":
+                emb = mean_pooling(output, encoded["attention_mask"])
+                emb = F.normalize(emb, p=2, dim=1)
+            else:
+                emb = output.last_hidden_state[:, 0, :]
+            all_embs.append(emb.cpu())
+
+        return torch.cat(all_embs, dim=0)
+
+    for iv in tqdm(interviews, desc="Pre-computing dialogue pair embeddings"):
+        # Patient instances: Q-A dialogue pairs
+        qa_pairs = iv.get("qa_pairs", [])
+        if not qa_pairs:
+            # Fallback to individual utterances if no Q-A pairs
+            qa_pairs = iv.get("utterances", [""])
+        if not qa_pairs:
+            qa_pairs = [""]
+
+        patient_emb = _encode_texts(qa_pairs)
+
+        # Interviewer instances: Ellie-only utterances
+        interviewer_utts = iv.get("interviewer_utterances", [""])
+        if not interviewer_utts:
+            interviewer_utts = [""]
+
+        interviewer_emb = _encode_texts(interviewer_utts)
+
+        processed.append({
+            **iv,
+            "patient_embeddings": patient_emb,
+            "interviewer_embeddings": interviewer_emb,
+        })
+
+    return processed
+
+
 # ---------------------------------------------------------------------------
 # Training and Evaluation Loops
 # ---------------------------------------------------------------------------
