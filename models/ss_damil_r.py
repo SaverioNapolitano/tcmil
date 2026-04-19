@@ -656,6 +656,11 @@ class MultiHeadAttentionPooling(nn.Module):
         self.W = nn.ModuleList([nn.Linear(input_dim, hidden_dim) for _ in range(n_heads)])
         self.v = nn.ModuleList([nn.Linear(hidden_dim, 1, bias=False) for _ in range(n_heads)])
 
+        # Xavier initialization (restored from default)
+        for i in range(n_heads):
+            nn.init.xavier_uniform_(self.W[i].weight)
+            nn.init.xavier_uniform_(self.v[i].weight)
+
         # Projection: concatenated heads -> working_dim
         self.merge = nn.Linear(input_dim * n_heads, input_dim)
 
@@ -919,6 +924,701 @@ class SSDamilRClassifierV9(nn.Module):
             pooled_batch: Tensor of shape (B, D).
             diversity_loss: Scalar mean diversity loss.
         """
+        batch_size = patient_bags.size(0)
+        pooled_list = []
+        div_losses = []
+
+        for i in range(batch_size):
+            p_n = patient_sizes[i]
+            i_n = interviewer_sizes[i]
+            p_i = patient_bags[i, :p_n, :]
+            i_i = interviewer_bags[i, :i_n, :]
+
+            pooled, div_loss = self.forward_backbone(p_i, i_i, noise_std=noise_std)
+            pooled_list.append(pooled)
+            div_losses.append(div_loss)
+
+        return torch.stack(pooled_list), torch.stack(div_losses).mean()
+
+
+class PositionalEncoding(nn.Module):
+    """Sinusoidal positional encoding for variable-length sequences.
+
+    Injects relative turn-order information into instance features before
+    attention pooling, enabling the model to capture the temporal structure
+    of clinical interviews (icebreakers → symptom probing → personal questions).
+
+    Args:
+        d_model: Dimensionality of input embeddings.
+        max_len: Maximum sequence length to support.
+        scale: Scaling factor for positional signal (small to avoid
+               overwhelming semantic content).
+    """
+
+    def __init__(self, d_model: int, max_len: int = 500, scale: float = 0.1):
+        super().__init__()
+        self.scale = scale
+
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2, dtype=torch.float) * (-torch.log(torch.tensor(10000.0)) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[:d_model // 2])  # handle odd d_model
+        self.register_buffer("pe", pe)  # (max_len, d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Add scaled positional encoding to input.
+
+        Args:
+            x: Tensor of shape (seq_len, d_model).
+
+        Returns:
+            Tensor of shape (seq_len, d_model) with positional info added.
+        """
+        seq_len = x.size(0)
+        return x + self.scale * self.pe[:seq_len]
+
+
+class SSDamilRClassifierV11c(nn.Module):
+    """v11c: Temporal-Aware Multi-Head Pooling + Gated Symptom Injection.
+
+    Identical to SSDamilRClassifierV9 but adds sinusoidal positional encoding
+    to instance features before attention pooling, enabling the model to
+    exploit the temporal structure of clinical interviews.
+
+    Architectural differences from V9:
+    - PositionalEncoding applied to fused instance features before pooling
+    - All other components (backbone, pooling, symptom injection) unchanged
+    """
+
+    def __init__(
+        self,
+        embedding_dim: int = 768,
+        proj_dim: int = 64,
+        num_symptoms: int = 8,
+        dropout_rate: float = 0.3,
+        temperature: float = 1.0,
+        n_pool_heads: int = 2,
+        pe_scale: float = 0.1,
+    ):
+        super().__init__()
+        self.num_symptoms = num_symptoms
+        self.working_dim = proj_dim if (proj_dim and proj_dim > 0) else embedding_dim
+
+        # 1. Projector (same as baseline)
+        if proj_dim and proj_dim > 0:
+            self.projector = nn.Sequential(
+                nn.Linear(embedding_dim, proj_dim),
+                nn.ReLU(),
+            )
+        else:
+            self.projector = nn.Identity()
+
+        # 2-3. Role Interaction (Backbone)
+        self.cross_attention = CrossRoleAttention(dim=self.working_dim)
+        self.fusion = RoleAwareFusion(dim=self.working_dim)
+        self.post_fusion_norm = nn.LayerNorm(self.working_dim)
+
+        # 3.5 Positional Encoding (NEW in v11c)
+        self.pos_encoding = PositionalEncoding(
+            d_model=self.working_dim,
+            max_len=500,
+            scale=pe_scale,
+        )
+
+        # 4. Multi-Head Attention Pooling
+        self.pooling = MultiHeadAttentionPooling(
+            input_dim=self.working_dim,
+            hidden_dim=32,
+            n_heads=n_pool_heads,
+            temperature=temperature,
+        )
+
+        # 5. Symptom Head (Auxiliary)
+        self.symptom_head = nn.Sequential(
+            nn.Linear(self.working_dim, 16),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(16, num_symptoms),
+        )
+
+        # 6. Gated Symptom Injection
+        self.sym_projector = nn.Sequential(
+            nn.Linear(num_symptoms, self.working_dim),
+            nn.Tanh(),
+        )
+        self.inject_gate = nn.Linear(self.working_dim * 2, self.working_dim)
+        nn.init.constant_(self.inject_gate.bias, 2.0)
+
+        # 7. Main Classifier
+        self.main_classifier = nn.Linear(self.working_dim, 1)
+        self.dropout = nn.Dropout(dropout_rate)
+
+    def forward(
+        self,
+        patient_emb: torch.Tensor,
+        interviewer_emb: torch.Tensor,
+        noise_std: float = 0.0,
+    ) -> dict:
+        # Noise for stability
+        if self.training and noise_std > 0:
+            patient_emb = patient_emb + torch.randn_like(patient_emb) * noise_std
+            interviewer_emb = interviewer_emb + torch.randn_like(interviewer_emb) * noise_std
+
+        # Feature Backbone
+        p_proj = self.projector(patient_emb)
+        i_proj = self.projector(interviewer_emb)
+
+        context, _ = self.cross_attention(p_proj, i_proj)
+        instance_features = self.post_fusion_norm(self.fusion(p_proj, context))
+
+        # v11c: Add positional encoding BEFORE pooling
+        instance_features = self.pos_encoding(instance_features)
+
+        # Multi-Head Pooling
+        pooled, head_weights, diversity_loss = self.pooling(instance_features)
+
+        # Auxiliary Symptom Predictions
+        sym_logits = self.symptom_head(pooled)  # (8,)
+
+        # Gated Symptom Injection
+        sym_signal = self.sym_projector(sym_logits)  # (D,)
+        gate_input = torch.cat([pooled, sym_signal], dim=0).unsqueeze(0)  # (1, 2D)
+        gate = torch.sigmoid(self.inject_gate(gate_input)).squeeze(0)  # (D,)
+        enriched = gate * pooled + (1.0 - gate) * sym_signal  # (D,)
+
+        # Main Prediction
+        main_h = self.dropout(enriched)
+        main_logit = self.main_classifier(main_h).squeeze(-1)
+
+        return {
+            "logit": main_logit,
+            "symptom_logits": sym_logits,       # (8,)
+            "head_weights": head_weights,       # list of (P,) tensors
+            "diversity_loss": diversity_loss,    # scalar
+            "pooled_representation": pooled,    # (D,)
+        }
+
+    def forward_backbone(
+        self,
+        patient_emb: torch.Tensor,
+        interviewer_emb: torch.Tensor,
+        noise_std: float = 0.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the backbone (projector → cross-attention → fusion → PE → pooling).
+
+        Returns:
+            pooled: Pooled bag representation of shape (D,).
+            diversity_loss: Scalar diversity loss from multi-head pooling.
+        """
+        if self.training and noise_std > 0:
+            patient_emb = patient_emb + torch.randn_like(patient_emb) * noise_std
+            interviewer_emb = interviewer_emb + torch.randn_like(interviewer_emb) * noise_std
+
+        p_proj = self.projector(patient_emb)
+        i_proj = self.projector(interviewer_emb)
+
+        context, _ = self.cross_attention(p_proj, i_proj)
+        instance_features = self.post_fusion_norm(self.fusion(p_proj, context))
+
+        # v11c: Add positional encoding
+        instance_features = self.pos_encoding(instance_features)
+
+        pooled, _, diversity_loss = self.pooling(instance_features)
+        return pooled, diversity_loss
+
+    def forward_heads(self, pooled: torch.Tensor) -> dict:
+        """Run the classification heads on a (possibly mixed) pooled representation.
+
+        Args:
+            pooled: Tensor of shape (D,) or (B, D).
+
+        Returns:
+            Dict with 'logit'/'logits' and 'symptom_logits'.
+        """
+        is_batched = pooled.dim() == 2
+
+        sym_logits = self.symptom_head(pooled)
+        sym_signal = self.sym_projector(sym_logits)
+
+        if is_batched:
+            gate_input = torch.cat([pooled, sym_signal], dim=1)  # (B, 2D)
+        else:
+            gate_input = torch.cat([pooled, sym_signal], dim=0).unsqueeze(0)  # (1, 2D)
+
+        gate = torch.sigmoid(self.inject_gate(gate_input))  # (B, D) or (1, D)
+        if not is_batched:
+            gate = gate.squeeze(0)
+
+        enriched = gate * pooled + (1.0 - gate) * sym_signal
+
+        main_h = self.dropout(enriched)
+        main_logit = self.main_classifier(main_h).squeeze(-1)
+
+        key = "logits" if is_batched else "logit"
+        return {key: main_logit, "symptom_logits": sym_logits}
+
+    def forward_batch(
+        self,
+        patient_bags: torch.Tensor,
+        interviewer_bags: torch.Tensor,
+        patient_sizes: list[int],
+        interviewer_sizes: list[int],
+        noise_std: float = 0.0,
+    ) -> dict:
+        batch_size = patient_bags.size(0)
+
+        batch_main_logits = []
+        batch_symptom_logits = []
+        batch_diversity_losses = []
+
+        for i in range(batch_size):
+            p_n = patient_sizes[i]
+            i_n = interviewer_sizes[i]
+
+            p_i = patient_bags[i, :p_n, :]
+            i_i = interviewer_bags[i, :i_n, :]
+
+            res = self.forward(p_i, i_i, noise_std=noise_std)
+            batch_main_logits.append(res["logit"])
+            batch_symptom_logits.append(res["symptom_logits"])
+            batch_diversity_losses.append(res["diversity_loss"])
+
+        return {
+            "logits": torch.stack(batch_main_logits),
+            "symptom_logits": torch.stack(batch_symptom_logits),     # (B, 8)
+            "diversity_loss": torch.stack(batch_diversity_losses).mean(),  # scalar
+        }
+
+    def forward_batch_split(
+        self,
+        patient_bags: torch.Tensor,
+        interviewer_bags: torch.Tensor,
+        patient_sizes: list[int],
+        interviewer_sizes: list[int],
+        noise_std: float = 0.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run backbone for each sample, return stacked pooled reps + mean diversity loss.
+
+        Returns:
+            pooled_batch: Tensor of shape (B, D).
+            diversity_loss: Scalar mean diversity loss.
+        """
+        batch_size = patient_bags.size(0)
+        pooled_list = []
+        div_losses = []
+
+        for i in range(batch_size):
+            p_n = patient_sizes[i]
+            i_n = interviewer_sizes[i]
+            p_i = patient_bags[i, :p_n, :]
+            i_i = interviewer_bags[i, :i_n, :]
+
+            pooled, div_loss = self.forward_backbone(p_i, i_i, noise_std=noise_std)
+            pooled_list.append(pooled)
+            div_losses.append(div_loss)
+
+        return torch.stack(pooled_list), torch.stack(div_losses).mean()
+
+
+class SSDamilRClassifierV12(nn.Module):
+    """v12: Symptom-Guided Cross-Attention + MR-Drop.
+
+    Architectural differences from V9/11b:
+    - Replaces the linear gated symptom injection with Symptom-Guided Cross-Attention.
+    - 8 trainable symptom embeddings are scaled by their predicted probability.
+    - The pooled representation uses Multi-Head Attention to selectively attend 
+      to the active symptoms.
+    - Shared backbone (projector + cross-role attention + gated fusion + pooling) unchanged.
+    """
+
+    def __init__(
+        self,
+        embedding_dim: int = 768,
+        proj_dim: int = 64,
+        num_symptoms: int = 8,
+        dropout_rate: float = 0.3,
+        temperature: float = 1.0,
+        n_pool_heads: int = 2,
+    ):
+        super().__init__()
+        self.num_symptoms = num_symptoms
+        self.working_dim = proj_dim if (proj_dim and proj_dim > 0) else embedding_dim
+
+        # 1. Projector (same as baseline)
+        if proj_dim and proj_dim > 0:
+            self.projector = nn.Sequential(
+                nn.Linear(embedding_dim, proj_dim),
+                nn.ReLU(),
+            )
+        else:
+            self.projector = nn.Identity()
+
+        # 2-3. Role Interaction (Backbone)
+        self.cross_attention = CrossRoleAttention(dim=self.working_dim)
+        self.fusion = RoleAwareFusion(dim=self.working_dim)
+        self.post_fusion_norm = nn.LayerNorm(self.working_dim)
+
+        # 4. Multi-Head Attention Pooling
+        self.pooling = MultiHeadAttentionPooling(
+            input_dim=self.working_dim,
+            hidden_dim=32,
+            n_heads=n_pool_heads,
+            temperature=temperature,
+        )
+
+        # 5. Symptom Head (Auxiliary)
+        self.symptom_head = nn.Sequential(
+            nn.Linear(self.working_dim, 16),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(16, num_symptoms),
+        )
+
+        # 6. Symptom-Guided Cross-Attention
+        # Trainable symptom embeddings (one for each symptom)
+        self.sym_embeddings = nn.Parameter(torch.randn(num_symptoms, self.working_dim))
+        nn.init.xavier_uniform_(self.sym_embeddings)
+
+        # Multihead Attention: Query=Pooled, Key=Value=Scaled Symptoms
+        self.sym_cross_attn = nn.MultiheadAttention(
+            embed_dim=self.working_dim,
+            num_heads=4,
+            dropout=0.1,
+            batch_first=True
+        )
+        self.post_attn_norm = nn.LayerNorm(self.working_dim)
+
+        # 7. Main Classifier
+        self.main_classifier = nn.Linear(self.working_dim, 1)
+        self.dropout = nn.Dropout(dropout_rate)
+
+    def forward(
+        self,
+        patient_emb: torch.Tensor,
+        interviewer_emb: torch.Tensor,
+        noise_std: float = 0.0,
+    ) -> dict:
+        # This mirrors forward_backbone + forward_heads
+        pooled, diversity_loss = self.forward_backbone(patient_emb, interviewer_emb, noise_std)
+        head_outputs = self.forward_heads(pooled)
+        return {
+            "logit": head_outputs["logits"] if "logits" in head_outputs else head_outputs["logit"],
+            "symptom_logits": head_outputs["symptom_logits"],
+            "diversity_loss": diversity_loss,
+            "pooled_representation": pooled,
+        }
+
+    def forward_backbone(
+        self,
+        patient_emb: torch.Tensor,
+        interviewer_emb: torch.Tensor,
+        noise_std: float = 0.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.training and noise_std > 0:
+            patient_emb = patient_emb + torch.randn_like(patient_emb) * noise_std
+            interviewer_emb = interviewer_emb + torch.randn_like(interviewer_emb) * noise_std
+
+        p_proj = self.projector(patient_emb)
+        i_proj = self.projector(interviewer_emb)
+
+        context, _ = self.cross_attention(p_proj, i_proj)
+        instance_features = self.post_fusion_norm(self.fusion(p_proj, context))
+
+        pooled, _, diversity_loss = self.pooling(instance_features)
+        return pooled, diversity_loss
+
+    def forward_heads(self, pooled: torch.Tensor) -> dict:
+        is_batched = pooled.dim() == 2
+        
+        sym_logits = self.symptom_head(pooled) # (B, 8) or (8,)
+        sym_probs = torch.sigmoid(sym_logits)
+
+        # Prepare Query: (B, 1, D)
+        query = pooled.unsqueeze(1) if is_batched else pooled.unsqueeze(0).unsqueeze(0)
+
+        # Prepare Key/Value: Scale symptom embeddings by their predicted probability
+        if is_batched:
+            # sym_probs: (B, 8), sym_embeddings: (8, D)
+            # scale: (B, 8, 1) * (1, 8, D) => (B, 8, D)
+            kv = sym_probs.unsqueeze(-1) * self.sym_embeddings.unsqueeze(0)
+        else:
+            # sym_probs: (8,), sym_embeddings: (8, D)
+            kv = sym_probs.unsqueeze(-1) * self.sym_embeddings
+            kv = kv.unsqueeze(0) # (1, 8, D)
+
+        # Cross Attention
+        # query: (B, 1, D)
+        # key = value: (B, 8, D)
+        attn_out, _ = self.sym_cross_attn(query, kv, kv) # (B, 1, D)
+        
+        # Residual and Norm
+        enriched = query + attn_out
+        enriched = self.post_attn_norm(enriched).squeeze(1) # (B, D)
+
+        if not is_batched:
+            enriched = enriched.squeeze(0)
+
+        main_h = self.dropout(enriched)
+        main_logit = self.main_classifier(main_h).squeeze(-1)
+
+        key = "logits" if is_batched else "logit"
+        return {key: main_logit, "symptom_logits": sym_logits}
+
+    def forward_batch(
+        self,
+        patient_bags: torch.Tensor,
+        interviewer_bags: torch.Tensor,
+        patient_sizes: list[int],
+        interviewer_sizes: list[int],
+        noise_std: float = 0.0,
+    ) -> dict:
+        batch_size = patient_bags.size(0)
+
+        batch_main_logits = []
+        batch_symptom_logits = []
+        batch_diversity_losses = []
+
+        for i in range(batch_size):
+            p_n = patient_sizes[i]
+            i_n = interviewer_sizes[i]
+            p_i = patient_bags[i, :p_n, :]
+            i_i = interviewer_bags[i, :i_n, :]
+
+            res = self.forward(p_i, i_i, noise_std=noise_std)
+            batch_main_logits.append(res["logit"])
+            batch_symptom_logits.append(res["symptom_logits"])
+            batch_diversity_losses.append(res["diversity_loss"])
+
+        return {
+            "logits": torch.stack(batch_main_logits),
+            "symptom_logits": torch.stack(batch_symptom_logits),     
+            "diversity_loss": torch.stack(batch_diversity_losses).mean(),
+        }
+
+    def forward_batch_split(
+        self,
+        patient_bags: torch.Tensor,
+        interviewer_bags: torch.Tensor,
+        patient_sizes: list[int],
+        interviewer_sizes: list[int],
+        noise_std: float = 0.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size = patient_bags.size(0)
+        pooled_list = []
+        div_losses = []
+
+        for i in range(batch_size):
+            p_n = patient_sizes[i]
+            i_n = interviewer_sizes[i]
+            p_i = patient_bags[i, :p_n, :]
+            i_i = interviewer_bags[i, :i_n, :]
+
+            pooled, div_loss = self.forward_backbone(p_i, i_i, noise_std=noise_std)
+            pooled_list.append(pooled)
+            div_losses.append(div_loss)
+
+        return torch.stack(pooled_list), torch.stack(div_losses).mean()
+
+
+class GatedMultiHeadAttentionPooling(nn.Module):
+    """Gated Multi-Head Attention Pooling (based on Ilse et al., 2018).
+    
+    Replaces standard tanh attention with a more expressive formulation:
+    weights = softmax(w^T (tanh(V*x) * sigmoid(U*x)))
+    """
+    def __init__(self, input_dim: int, hidden_dim: int = 32, n_heads: int = 2, temperature: float = 1.0):
+        super().__init__()
+        self.n_heads = n_heads
+        self.temperature = nn.Parameter(torch.tensor(temperature, dtype=torch.float32))
+
+        self.V = nn.ModuleList([nn.Linear(input_dim, hidden_dim) for _ in range(n_heads)])
+        self.U = nn.ModuleList([nn.Linear(input_dim, hidden_dim) for _ in range(n_heads)])
+        self.w = nn.ModuleList([nn.Linear(hidden_dim, 1, bias=False) for _ in range(n_heads)])
+
+        for i in range(n_heads):
+            nn.init.xavier_uniform_(self.V[i].weight)
+            nn.init.xavier_uniform_(self.U[i].weight)
+            nn.init.xavier_uniform_(self.w[i].weight)
+
+        self.merge = nn.Linear(input_dim * n_heads, input_dim)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor], torch.Tensor]:
+        head_pooled = []
+        head_weights = []
+
+        for i in range(self.n_heads):
+            v_x = torch.tanh(self.V[i](x))
+            u_x = torch.sigmoid(self.U[i](x))
+            e = v_x * u_x
+            
+            logits = self.w[i](e) / self.temperature
+            weights = torch.softmax(logits, dim=0)
+            
+            pooled_i = torch.sum(x * weights, dim=0)
+            head_pooled.append(pooled_i)
+            head_weights.append(weights.squeeze(-1))
+
+        merged = torch.cat(head_pooled, dim=0)
+        pooled = self.merge(merged)
+
+        diversity_loss = torch.tensor(0.0, device=x.device)
+        n_pairs = 0
+        for i in range(self.n_heads):
+            for j in range(i + 1, self.n_heads):
+                cos_sim = F.cosine_similarity(
+                    head_weights[i].unsqueeze(0),
+                    head_weights[j].unsqueeze(0),
+                )
+                diversity_loss = diversity_loss + cos_sim.squeeze()
+                n_pairs += 1
+        if n_pairs > 0:
+            diversity_loss = diversity_loss / n_pairs
+
+        return pooled, head_weights, diversity_loss
+
+
+class SSDamilRClassifierV13(nn.Module):
+    """v13: Temporal Context (BiGRU) + Gated Attention Pooling + Symptom Injection.
+    """
+    def __init__(
+        self,
+        embedding_dim: int = 768,
+        proj_dim: int = 64,
+        num_symptoms: int = 8,
+        dropout_rate: float = 0.3,
+        temperature: float = 1.0,
+        n_pool_heads: int = 2,
+    ):
+        super().__init__()
+        self.num_symptoms = num_symptoms
+        self.working_dim = proj_dim if (proj_dim and proj_dim > 0) else embedding_dim
+
+        if proj_dim and proj_dim > 0:
+            self.projector = nn.Sequential(
+                nn.Linear(embedding_dim, proj_dim),
+                nn.ReLU(),
+            )
+        else:
+            self.projector = nn.Identity()
+
+        self.cross_attention = CrossRoleAttention(dim=self.working_dim)
+        self.fusion = RoleAwareFusion(dim=self.working_dim)
+        self.post_fusion_norm = nn.LayerNorm(self.working_dim)
+
+        # Temporal Context via lightweight BiGRU to prevent overfitting
+        self.temporal_context = nn.GRU(
+            input_size=self.working_dim,
+            hidden_size=self.working_dim // 2,
+            num_layers=1,
+            bidirectional=True,
+            batch_first=True
+        )
+
+        self.pooling = GatedMultiHeadAttentionPooling(
+            input_dim=self.working_dim,
+            hidden_dim=32,
+            n_heads=n_pool_heads,
+            temperature=temperature,
+        )
+
+        self.symptom_head = nn.Sequential(
+            nn.Linear(self.working_dim, 16),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(16, num_symptoms),
+        )
+
+        self.sym_projector = nn.Sequential(
+            nn.Linear(num_symptoms, self.working_dim),
+            nn.Tanh(),
+        )
+        self.inject_gate = nn.Linear(self.working_dim * 2, self.working_dim)
+        nn.init.constant_(self.inject_gate.bias, 2.0)
+
+        self.main_classifier = nn.Linear(self.working_dim, 1)
+        self.dropout = nn.Dropout(dropout_rate)
+
+    def forward(self, patient_emb: torch.Tensor, interviewer_emb: torch.Tensor, noise_std: float = 0.0) -> dict:
+        pooled, diversity_loss = self.forward_backbone(patient_emb, interviewer_emb, noise_std)
+        head_outputs = self.forward_heads(pooled)
+        return {
+            "logit": head_outputs["logits"] if "logits" in head_outputs else head_outputs["logit"],
+            "symptom_logits": head_outputs["symptom_logits"],
+            "diversity_loss": diversity_loss,
+            "pooled_representation": pooled,
+        }
+
+    def forward_backbone(self, patient_emb: torch.Tensor, interviewer_emb: torch.Tensor, noise_std: float = 0.0) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.training and noise_std > 0:
+            patient_emb = patient_emb + torch.randn_like(patient_emb) * noise_std
+            interviewer_emb = interviewer_emb + torch.randn_like(interviewer_emb) * noise_std
+
+        p_proj = self.projector(patient_emb)
+        i_proj = self.projector(interviewer_emb)
+
+        context, _ = self.cross_attention(p_proj, i_proj)
+        instance_features = self.post_fusion_norm(self.fusion(p_proj, context))
+
+        # Add unsqueeze for nn.GRU (batch_size, seq_len, dim)
+        instance_features = instance_features.unsqueeze(0)
+        instance_features, _ = self.temporal_context(instance_features)
+        instance_features = instance_features.squeeze(0)
+
+        pooled, _, diversity_loss = self.pooling(instance_features)
+        return pooled, diversity_loss
+
+    def forward_heads(self, pooled: torch.Tensor) -> dict:
+        is_batched = pooled.dim() == 2
+
+        sym_logits = self.symptom_head(pooled)
+        sym_signal = self.sym_projector(sym_logits)
+
+        if is_batched:
+            gate_input = torch.cat([pooled, sym_signal], dim=1)
+        else:
+            gate_input = torch.cat([pooled, sym_signal], dim=0).unsqueeze(0)
+
+        gate = torch.sigmoid(self.inject_gate(gate_input))
+        if not is_batched:
+            gate = gate.squeeze(0)
+
+        enriched = gate * pooled + (1.0 - gate) * sym_signal
+        main_h = self.dropout(enriched)
+        main_logit = self.main_classifier(main_h).squeeze(-1)
+
+        key = "logits" if is_batched else "logit"
+        return {key: main_logit, "symptom_logits": sym_logits}
+
+    def forward_batch(self, patient_bags: torch.Tensor, interviewer_bags: torch.Tensor, patient_sizes: list[int], interviewer_sizes: list[int], noise_std: float = 0.0) -> dict:
+        batch_size = patient_bags.size(0)
+        batch_main_logits = []
+        batch_symptom_logits = []
+        batch_diversity_losses = []
+
+        for i in range(batch_size):
+            p_n = patient_sizes[i]
+            i_n = interviewer_sizes[i]
+
+            p_i = patient_bags[i, :p_n, :]
+            i_i = interviewer_bags[i, :i_n, :]
+
+            pooled, div_loss = self.forward_backbone(p_i, i_i, noise_std=noise_std)
+            head_outputs = self.forward_heads(pooled)
+            
+            batch_main_logits.append(head_outputs["logit"] if "logit" in head_outputs else head_outputs["logits"])
+            batch_symptom_logits.append(head_outputs["symptom_logits"])
+            batch_diversity_losses.append(div_loss)
+
+        return {
+            "logits": torch.stack(batch_main_logits),
+            "symptom_logits": torch.stack(batch_symptom_logits),
+            "diversity_loss": torch.stack(batch_diversity_losses).mean(),
+        }
+
+    def forward_batch_split(self, patient_bags: torch.Tensor, interviewer_bags: torch.Tensor, patient_sizes: list[int], interviewer_sizes: list[int], noise_std: float = 0.0) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size = patient_bags.size(0)
         pooled_list = []
         div_losses = []

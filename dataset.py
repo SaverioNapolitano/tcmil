@@ -21,6 +21,7 @@ _SYMPTOM_COLS = [
 def load_interviews(
     data_dir: str | Path,
     split: str,
+    use_raw_data: bool = False,
 ) -> list[dict]:
     """Load all interviews for a given split.
 
@@ -57,7 +58,10 @@ def load_interviews(
     )
 
     # --- Load transcripts ---
-    transcript_dir = data_dir / "preprocessed" / split
+    if use_raw_data:
+        transcript_dir = data_dir / "raw"
+    else:
+        transcript_dir = data_dir / "preprocessed" / split
     interviews = []
 
     for pid, label in sorted(id_to_label.items()):
@@ -67,7 +71,10 @@ def load_interviews(
             print(f"  [WARN] No transcript file for participant {pid}, skipping.")
             continue
 
-        df = pd.read_csv(transcript_path)
+        if use_raw_data:
+            df = pd.read_csv(transcript_path, sep='\t', on_bad_lines='skip')
+        else:
+            df = pd.read_csv(transcript_path)
 
         # Keep only participant utterances (ignore Ellie / interviewer)
         participant_df = df[df["speaker"] == "Participant"]
@@ -120,7 +127,7 @@ def print_split_stats(interviews: list[dict], split: str) -> list[int]:
     return counts
 
 
-def load_all_interviews(data_dir: str | Path) -> list[dict]:
+def load_all_interviews(data_dir: str | Path, use_raw_data: bool = False) -> list[dict]:
     """Load and combine train, dev, and test splits into a single list.
     
     Useful for cross-validation where new splits are generated dynamically.
@@ -134,7 +141,7 @@ def load_all_interviews(data_dir: str | Path) -> list[dict]:
     all_interviews = []
     for split in ["train", "dev", "test"]:
         try:
-            interviews = load_interviews(data_dir, split)
+            interviews = load_interviews(data_dir, split, use_raw_data=use_raw_data)
             all_interviews.extend(interviews)
         except Exception as e:
             print(f"Warning: Could not load split '{split}': {e}")
@@ -146,6 +153,7 @@ def load_all_interviews(data_dir: str | Path) -> list[dict]:
 def load_interviews_with_roles(
     data_dir: str | Path,
     split: str,
+    use_raw_data: bool = False,
 ) -> list[dict]:
     """Load all interviews for a given split, keeping both participant and interviewer utterances.
 
@@ -180,7 +188,10 @@ def load_interviews_with_roles(
     )
 
     # --- Load transcripts ---
-    transcript_dir = data_dir / "preprocessed" / split
+    if use_raw_data:
+        transcript_dir = data_dir / "raw"
+    else:
+        transcript_dir = data_dir / "preprocessed" / split
     interviews = []
 
     for pid, label in sorted(id_to_label.items()):
@@ -190,7 +201,10 @@ def load_interviews_with_roles(
             print(f"  [WARN] No transcript file for participant {pid}, skipping.")
             continue
 
-        df = pd.read_csv(transcript_path)
+        if use_raw_data:
+            df = pd.read_csv(transcript_path, sep='\t', on_bad_lines='skip')
+        else:
+            df = pd.read_csv(transcript_path)
 
         # Participant utterances
         participant_df = df[df["speaker"] == "Participant"]
@@ -237,7 +251,7 @@ def load_interviews_with_roles(
     return interviews
 
 
-def load_all_interviews_with_roles(data_dir: str | Path) -> list[dict]:
+def load_all_interviews_with_roles(data_dir: str | Path, use_raw_data: bool = False) -> list[dict]:
     """Load and combine all splits with both participant and interviewer utterances.
 
     Useful for cross-validation with DAMIL-R where both roles are needed.
@@ -251,7 +265,7 @@ def load_all_interviews_with_roles(data_dir: str | Path) -> list[dict]:
     all_interviews = []
     for split in ["train", "dev", "test"]:
         try:
-            interviews = load_interviews_with_roles(data_dir, split)
+            interviews = load_interviews_with_roles(data_dir, split, use_raw_data=use_raw_data)
             all_interviews.extend(interviews)
         except Exception as e:
             print(f"Warning: Could not load split '{split}': {e}")
