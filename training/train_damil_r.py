@@ -192,6 +192,33 @@ def mean_pooling(model_output, attention_mask):
     return summed / counts
 
 
+def apply_sliding_window_context(utterances: list[str], window_size: int = 1) -> list[str]:
+    """Combine neighboring utterances into a single string for better contextual embedding.
+    
+    For window_size=1, each utterance at index i becomes:
+    utterances[i-1] + " [SEP] " + utterances[i] + " [SEP] " + utterances[i+1]
+    
+    Args:
+        utterances: List of strings.
+        window_size: Number of neighboring utterances to include on each side.
+        
+    Returns:
+        List of contextually enriched strings.
+    """
+    if window_size == 0 or not utterances:
+        return utterances
+        
+    enriched = []
+    n = len(utterances)
+    for i in range(n):
+        start = max(0, i - window_size)
+        end = min(n, i + window_size + 1)
+        # We use ' | ' as a separator as it's common in text streams, 
+        # or we could just use a space. Let's use a natural separator.
+        enriched.append(" | ".join(utterances[start:end]))
+    return enriched
+
+
 @torch.no_grad()
 def precompute_dual_role_embeddings(
     interviews: list[dict],
@@ -200,6 +227,7 @@ def precompute_dual_role_embeddings(
     device,
     max_len: int = MAX_TOKEN_LENGTH,
     pooling: str = DEFAULT_POOLING,
+    window_size: int = 0,
 ) -> list[dict]:
     """Pre-compute sentence embeddings for both participant and interviewer utterances.
 
@@ -214,6 +242,7 @@ def precompute_dual_role_embeddings(
         device: Torch device.
         max_len: Maximum token length for truncation.
         pooling: Pooling strategy ('cls' or 'mean').
+        window_size: Number of adjacent utterances to include for context.
 
     Returns:
         Enriched interview list with 'patient_embeddings' and 'interviewer_embeddings' tensors.
@@ -221,11 +250,13 @@ def precompute_dual_role_embeddings(
     encoder.eval()
     processed = []
 
-    for iv in tqdm(interviews, desc="Pre-computing dual-role embeddings"):
+    for iv in tqdm(interviews, desc=f"Pre-computing dual-role embeddings (window={window_size})"):
         # Patient utterances
         patient_utts = iv.get("utterances", [""])
         if not patient_utts:
             patient_utts = [""]
+            
+        patient_utts = apply_sliding_window_context(patient_utts, window_size)
 
         encoded_p = tokenizer(
             patient_utts,
@@ -247,6 +278,8 @@ def precompute_dual_role_embeddings(
         interviewer_utts = iv.get("interviewer_utterances", [""])
         if not interviewer_utts:
             interviewer_utts = [""]
+            
+        interviewer_utts = apply_sliding_window_context(interviewer_utts, window_size)
 
         encoded_i = tokenizer(
             interviewer_utts,
