@@ -373,6 +373,76 @@ def load_all_interviews_dialogue_pairs(data_dir: str | Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Text Augmentation (for on-the-fly re-embedding)
+# ---------------------------------------------------------------------------
+
+import random as _random
+
+
+def augment_utterances_word_dropout(
+    utterances: list[str], drop_rate: float = 0.05
+) -> list[str]:
+    """Drop words independently from each utterance.
+
+    Simulates disfluencies and partial responses common in clinical
+    interviews.  Preserves at least 2 words per utterance.
+    """
+    augmented = []
+    for u in utterances:
+        words = u.split()
+        if len(words) > 2 and drop_rate > 0:
+            kept = [w for w in words if _random.random() > drop_rate]
+            if len(kept) < 2:
+                kept = words[:2]
+            augmented.append(" ".join(kept))
+        else:
+            augmented.append(u)
+    return augmented
+
+
+def augment_utterances_deletion(
+    utterances: list[str], drop_rate: float = 0.2
+) -> list[str]:
+    """Randomly remove entire utterances from a bag.
+
+    Produces genuinely different embedding bags when re-encoded.
+    Preserves at least 3 utterances.
+    """
+    if len(utterances) <= 3 or drop_rate <= 0:
+        return list(utterances)
+    kept = [u for u in utterances if _random.random() > drop_rate]
+    if len(kept) < 3:
+        kept = list(utterances)[:3]
+    return kept
+
+
+def create_augmented_interview(
+    interview: dict,
+    aug_idx: int,
+    word_drop_rate: float = 0.05,
+    utt_drop_rate: float = 0.2,
+) -> dict:
+    """Return an augmented copy of *interview* with modified patient text.
+
+    The copy has the same label, symptoms, and interviewer utterances but
+    different patient utterances (after word dropout + utterance deletion).
+    Pre-computed embeddings are **removed** — the caller must re-embed.
+    """
+    aug = {**interview}
+    aug["interview_id"] = f"{interview['interview_id']}_aug{aug_idx}"
+
+    utts = list(interview["utterances"])
+    utts = augment_utterances_deletion(utts, drop_rate=utt_drop_rate)
+    utts = augment_utterances_word_dropout(utts, drop_rate=word_drop_rate)
+    aug["utterances"] = utts
+
+    # Remove stale embeddings — they must be re-computed from augmented text
+    aug.pop("patient_embeddings", None)
+    aug.pop("interviewer_embeddings", None)
+    return aug
+
+
+# ---------------------------------------------------------------------------
 # Datasets and Collation
 # ---------------------------------------------------------------------------
 
@@ -394,6 +464,7 @@ class DualRoleBagDataset(Dataset):
         item = self.interviews[idx]
         patient_bag = item["patient_embeddings"]       # (P, d)
         interviewer_bag = item["interviewer_embeddings"]  # (I, d)
+        patient_ling = item.get("patient_ling_features", None) # (P, 16)
 
         # Instance dropout: randomly drop utterances during training
         if self.instance_dropout > 0:
@@ -402,6 +473,8 @@ class DualRoleBagDataset(Dataset):
                 mask[0] = True
                 if mask.sum() < 2: mask[:2] = True
                 patient_bag = patient_bag[mask]
+                if patient_ling is not None:
+                    patient_ling = patient_ling[mask]
 
             if interviewer_bag.size(0) > 2:
                 mask = torch.rand(interviewer_bag.size(0)) > self.instance_dropout
@@ -418,6 +491,7 @@ class DualRoleBagDataset(Dataset):
             "has_symptoms": torch.tensor(1.0 if item.get("has_symptoms", False) else 0.0, dtype=torch.float),
             "utterances": item.get("utterances", []),
             "interviewer_utterances": item.get("interviewer_utterances", []),
+            "patient_ling": patient_ling,
         }
 
 
@@ -429,6 +503,8 @@ def collate_dual_role_bags(batch):
     ids = [item["interview_id"] for item in batch]
     utts = [item["utterances"] for item in batch]
     int_utts = [item["interviewer_utterances"] for item in batch]
+    patient_lings = [item.get("patient_ling") for item in batch]
+    has_ling = all(l is not None for l in patient_lings)
 
     patient_sizes = [bag.size(0) for bag in patient_bags]
     interviewer_sizes = [bag.size(0) for bag in interviewer_bags]
@@ -439,10 +515,17 @@ def collate_dual_role_bags(batch):
 
     padded_patient = torch.zeros(len(batch), max_p, d)
     padded_interviewer = torch.zeros(len(batch), max_i, d)
+    
+    padded_ling = None
+    if has_ling:
+        d_ling = patient_lings[0].size(1)
+        padded_ling = torch.zeros(len(batch), max_p, d_ling)
 
     for idx, (p_bag, i_bag) in enumerate(zip(patient_bags, interviewer_bags)):
         padded_patient[idx, :patient_sizes[idx], :] = p_bag
         padded_interviewer[idx, :interviewer_sizes[idx], :] = i_bag
+        if has_ling:
+            padded_ling[idx, :patient_sizes[idx], :] = patient_lings[idx]
 
     return {
         "patient_bags": padded_patient,
@@ -455,6 +538,7 @@ def collate_dual_role_bags(batch):
         "interview_ids": ids,
         "utterances_lists": utts,
         "interviewer_utterances_lists": int_utts,
+        "patient_ling_features": padded_ling,
     }
 
 

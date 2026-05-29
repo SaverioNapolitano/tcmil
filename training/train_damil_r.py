@@ -228,6 +228,7 @@ def precompute_dual_role_embeddings(
     max_len: int = MAX_TOKEN_LENGTH,
     pooling: str = DEFAULT_POOLING,
     window_size: int = 0,
+    prepend_roles: bool = False,
 ) -> list[dict]:
     """Pre-compute sentence embeddings for both participant and interviewer utterances.
 
@@ -257,6 +258,8 @@ def precompute_dual_role_embeddings(
             patient_utts = [""]
             
         patient_utts = apply_sliding_window_context(patient_utts, window_size)
+        if prepend_roles:
+            patient_utts = ["Patient: " + u for u in patient_utts]
 
         encoded_p = tokenizer(
             patient_utts,
@@ -280,6 +283,8 @@ def precompute_dual_role_embeddings(
             interviewer_utts = [""]
             
         interviewer_utts = apply_sliding_window_context(interviewer_utts, window_size)
+        if prepend_roles:
+            interviewer_utts = ["Interviewer: " + u for u in interviewer_utts]
 
         encoded_i = tokenizer(
             interviewer_utts,

@@ -175,6 +175,137 @@ def run_stratified_group_k_fold(
     return agg_metrics, all_raw_metrics
 
 
+def run_stratified_group_k_fold_ensemble(
+    interviews: list[dict[str, Any]],
+    train_eval_fn: Callable[[list[dict], list[dict], int], dict[str, float]],
+    n_folds: int = 5,
+    n_seeds_per_fold: int = 5,
+    random_state: int = 42,
+) -> tuple[dict[str, dict[str, float]], list[dict], dict[str, dict[str, float]]]:
+    """Stratified Group K-Fold with per-fold seed-ensemble aggregation.
+
+    Runs the standard K-Fold CV, but additionally computes fold-level
+    ensemble metrics by averaging predicted probabilities across seeds
+    within each fold before re-computing metrics.
+
+    This produces more stable fold-level estimates (variance reduced by
+    √n_seeds) and tighter confidence intervals.
+
+    Args:
+        interviews: List of all interviews.
+        train_eval_fn: Callback `fn(train_pool, test_set, seed) -> metrics_dict`.
+                       Must return 'probability' (list[float]) and 'true_label'
+                       (list[int]) in addition to standard metrics.
+        n_folds: Number of folds.
+        n_seeds_per_fold: Number of seeds per fold.
+        random_state: Base seed.
+
+    Returns:
+        A tuple of:
+        - per_run_agg: Aggregated metrics across all individual runs (standard)
+        - all_raw_metrics: List of all per-run metric dicts
+        - fold_ensemble_agg: Aggregated metrics from fold-level ensembles
+    """
+    labels = [iv["label"] for iv in interviews]
+    groups = [iv["interview_id"] for iv in interviews]
+
+    cv = StratifiedGroupKFold(
+        n_splits=n_folds,
+        shuffle=True,
+        random_state=random_state
+    )
+
+    all_raw_metrics = []
+    # Collect predictions per fold for ensemble
+    fold_seed_predictions: dict[int, list[dict]] = {}
+
+    print(f"\n={'='*70}=")
+    print(f" Starting Stratified Group K-Fold CV (Seed-Ensemble)")
+    print(f" Folds: {n_folds}, Seeds/Fold: {n_seeds_per_fold}")
+    print(f" Total training runs: {n_folds * n_seeds_per_fold}")
+    print(f"={'='*70}=")
+
+    ivs_np = np.array(interviews)
+
+    for fold_idx, (train_idx, test_idx) in enumerate(cv.split(ivs_np, labels, groups), 1):
+        train_pool = ivs_np[train_idx].tolist()
+        test_set = ivs_np[test_idx].tolist()
+
+        n_train_sub = len(set(iv["interview_id"] for iv in train_pool))
+        n_test_sub = len(set(iv["interview_id"] for iv in test_set))
+
+        print(f"\n─── Fold {fold_idx}/{n_folds} ───")
+        print(f"Train subjects: {n_train_sub}, Records: {len(train_pool)}")
+        print(f"Test subjects: {n_test_sub}, Records: {len(test_set)}")
+
+        fold_seed_predictions[fold_idx] = []
+
+        for seed_idx in range(n_seeds_per_fold):
+            run_seed = random_state + (fold_idx * 100) + seed_idx
+            print(f"\n  [Fold {fold_idx}, Run {seed_idx+1}/{n_seeds_per_fold}] Seed = {run_seed}")
+
+            metrics = train_eval_fn(train_pool, test_set, run_seed)
+
+            metrics["_fold_idx"] = fold_idx
+            metrics["_seed_idx"] = seed_idx
+            metrics["_run_seed"] = run_seed
+            all_raw_metrics.append(metrics)
+
+            # Store predictions for fold-ensemble
+            pred_dict = {}
+            if "probability" in metrics and "true_label" in metrics:
+                pred_dict["probability"] = np.array(metrics["probability"])
+                pred_dict["true_label"] = np.array(metrics["true_label"])
+            if "val_probability" in metrics and "val_true_label" in metrics:
+                pred_dict["val_probability"] = np.array(metrics["val_probability"])
+                pred_dict["val_true_label"] = np.array(metrics["val_true_label"])
+            if pred_dict:
+                fold_seed_predictions[fold_idx].append(pred_dict)
+
+    # --- Standard per-run aggregation ---
+    per_run_agg = compute_aggregate_metrics(all_raw_metrics)
+
+    # --- Fold-level seed-ensemble aggregation ---
+    fold_ensemble_metrics = []
+
+    for fold_idx in sorted(fold_seed_predictions.keys()):
+        seed_preds = fold_seed_predictions[fold_idx]
+        if not seed_preds:
+            continue
+
+        # Average probabilities across seeds
+        all_probs = np.stack([sp["probability"] for sp in seed_preds])
+        avg_probs = np.mean(all_probs, axis=0)
+        y_true = seed_preds[0]["true_label"]  # Same for all seeds in this fold
+
+        best_t = 0.5
+        if "val_probability" in seed_preds[0] and "val_true_label" in seed_preds[0]:
+            all_val_probs = np.stack([sp["val_probability"] for sp in seed_preds])
+            avg_val_probs = np.mean(all_val_probs, axis=0)
+            val_y_true = seed_preds[0]["val_true_label"]
+            
+            num_pos = max(1, np.sum(val_y_true == 1))
+            neg_to_pos = np.sum(val_y_true == 0) / num_pos
+            
+            from utils.metrics import find_best_threshold
+            best_t = find_best_threshold(val_y_true, avg_val_probs, metric="loss", pos_weight=neg_to_pos)
+
+        # Compute metrics from the averaged probabilities
+        y_pred = (avg_probs >= best_t).astype(int)
+        fold_metrics = compute_metrics(y_true, y_pred, avg_probs)
+        fold_metrics["_fold_idx"] = fold_idx
+        fold_metrics["_ensemble_threshold"] = float(best_t)
+        fold_ensemble_metrics.append(fold_metrics)
+
+        print(f"\n  Fold {fold_idx} ensemble (t={best_t:.2f}): "
+              f"ROC-AUC={fold_metrics['roc_auc']:.4f}, "
+              f"F1={fold_metrics['f1']:.4f}")
+
+    fold_ensemble_agg = compute_aggregate_metrics(fold_ensemble_metrics)
+
+    return per_run_agg, all_raw_metrics, fold_ensemble_agg
+
+
 def run_leave_one_subject_out_cv(
     interviews: list[dict[str, Any]],
     train_eval_fn: Callable[[list[dict], list[dict], int], dict[str, Any]],
