@@ -1,0 +1,5 @@
+# Stage-3 CV — EDIT AFTER JOB 2 (grid). One per line: name|flags.
+# The single stage-1 winner vs the frozen control. Each line runs kfold +
+# kfold repeat-2 (seed 1042) + mc, all with --threshold_mode testprev.
+winner|--ft_method lora --lora_r 16 --encoder_lr 1e-4
+frozen|--ft_method frozen
