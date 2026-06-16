@@ -7,7 +7,8 @@
 
 ## Full-data (189 transcripts) — canonical results
 
-All in `results/full189/` (official splits 107/35/47, CV pool 142).
+Results in `results/single_model/`, `results/ensemble/`,
+`results/cross_validation/` (official splits 107/35/47, CV pool 142).
 `macro_f1` (unweighted mean of per-class F1 — what the literature reports
 as "F1") is now logged alongside the positive-class `f1` everywhere.
 
@@ -15,30 +16,35 @@ as "F1") is now logged alongside the positive-class `f1` everywhere.
 > literature (which reports single-model per-seed mean ± std), the headline is
 > a **single trained model** — no seed-, encoder-, or member-ensembling.
 > Ensemble results and their roadmap are parked in
-> [`doc/report/BACKLOG.md`](BACKLOG.md) as an optional later boost.
+> [`doc/report/BACKLOG.md`](doc/report/BACKLOG.md) as an optional later boost.
 
 ### Official AVEC2017 test — single model (bge-large, 30-seed per-seed mean ± std)
 
-| Model | AUC | macro-F1 | micro-F1 | macro p vs 0.739 |
+Source: `results/single_model/headline_pw1_30seed/`.
+
+| Model | AUC | macro-F1 | micro-F1 | micro p vs 0.766 |
 | --- | --- | --- | --- | --- |
-| **TC-MIL single (bge-large, pos_weight=1.0)** | **0.864 ± 0.011** | **0.774 ± 0.029** | **0.814 ± 0.024** | **3.8e-07** |
+| **TC-MIL single (bge-large, pos_weight=1.0)** | **0.864 ± 0.011** | **0.751 ± 0.031** | **0.780 ± 0.020** | **4.6e-04** |
 | Milintsevich et al. 2023 (baseline) | — | 0.739 ± 0.025 | 0.766 ± 0.023 | — |
 | old DAMIL-R v9d (aligned, single) | 0.763 | 0.625 | — | — |
 
 Per-seed mean ± std (30 seeds), a-priori prevalence threshold (no test tuning).
-The **single model significantly beats** the strongest verified non-leaky
-baseline on **all three** metrics. The macro-F1 was lifted 0.751 → 0.774 by
-dropping the recall-biasing `pos_weight` (≈2.5 → 1.0) — a single model change,
-no tuning, no ensembling (the one-lever campaign is in
-`results/full189/SINGLE_MODEL_IMPROVEMENTS.md`; ensembling parked in
-`doc/report/BACKLOG.md`).
+The single model beats the strongest verified non-leaky baseline on **micro-F1**
+(0.780 vs 0.766, one-sample t over 30 seeds **p = 4.6e-04**) and on **macro-F1**
+(0.751 vs 0.739, p = 0.043, marginal), at AUC 0.864. `pos_weight = 1.0` is the
+chosen recipe for its AUC/micro-F1 edge — its macro-F1 ties the auto class-weight
+run (0.751 vs 0.754, `results/single_model/official_bgelarge_30seed/`).
+Ensembling parked in [`doc/report/BACKLOG.md`](doc/report/BACKLOG.md).
 
-### Cross-validation — single model (clean pool 142, test excluded)
+### Cross-validation — clean pool 142 (test excluded)
+
+Source: `results/cross_validation/`.
 
 | Protocol | AUC | macro-F1 | F1 | BAcc |
 | --- | --- | --- | --- | --- |
 | Repeated K-Fold (5×5, GRU, testprev), per-run | 0.799 | 0.706 | 0.582 | 0.710 |
-| Monte Carlo (10 seeds, GRU, testprev), per-run | *(running)* | | | |
+| Repeated K-Fold (5×5, GRU, testprev), seed-ensemble | 0.820 | 0.735 | 0.628 | 0.736 |
+| Monte Carlo (10 seeds, 3-member, testprev), seed-ensemble | 0.883 | 0.804 | 0.727 | 0.801 |
 
 ### Interviewer-prompt bias control (Burdisso et al. 2024)
 
@@ -49,9 +55,9 @@ much of the text-only literature.
 
 ### Comparison with literature baselines (`doc/report/ALTERNATIVE-APPROACHES.md`)
 
-Single-model numbers are **30-seed** mean ± std (seeds 100–129, a-priori
-prevalence threshold), matched to how the test-set baseline reports — see
-`results/full189/SEED_STABILITY.md`. Primary baseline = **Milintsevich et al.
+Single-model numbers are **30-seed** mean ± std (a-priori prevalence
+threshold), matched to how the test-set baseline reports — see
+`results/single_model/headline_pw1_30seed/`. Primary baseline = **Milintsevich et al.
 2023** (Brain Informatics symptom-prediction model); see
 `doc/report/ALTERNATIVE-APPROACHES.md` for why it is the cleanest test-set
 baseline and why RED/SEGA++ are bias-suspect.
@@ -64,7 +70,8 @@ is *derived* (acc + macro + 14/33 split → ≈0.66); see
 | Method | Setup | pos-F1 | micro-F1 | macro-F1 | AUC |
 | --- | --- | --- | --- | --- | --- |
 | Milintsevich et al. 2023 (symptom prediction) | test, 5-seed mean | ≈0.658 (derived) | 0.766 | 0.739 | — |
-| **TC-MIL single (per-seed, pos_weight=1.0)** | test, 30 seeds | **0.678 ± 0.041** | **0.814 ± 0.024** | **0.774 ± 0.029 (p=3.8e-07)** | **0.864 ± 0.011** |
+| **TC-MIL single (per-seed, pos_weight=1.0)** | test, 30 seeds | **0.669 ± 0.060** | **0.780 ± 0.020 (p=4.6e-04)** | **0.751 ± 0.031 (p=0.043)** | **0.864 ± 0.011** |
+| **TC-MIL ensemble (bge-large plain + mxbai GRU, OOF-prev)** | test | 0.750 | — | **0.810** | **0.874** |
 | **TC-MIL (dev-tuned threshold, RED setup)** | dev | — | — | **0.849** | — |
 | SEGA | dev | — | — | 0.849 | — |
 | Psi-GCN / HCAG | dev | — | — | 0.838 / 0.816 | — |
@@ -72,18 +79,19 @@ is *derived* (acc + macro + 14/33 split → ≈0.66); see
 | MDSD-FGPL / Multi-MTRB | test (fusions) | 0.828 / 0.88 | — | 0.874 / — | — |
 
 Framing: the **single** TC-MIL model **significantly exceeds** the strongest
-verified non-leaky test baseline (Milintsevich et al. 2023) on **all three**
-metrics — micro-F1 0.814 vs 0.766, macro-F1 0.774 vs 0.739 (one-sample t over
-30 seeds, **p = 3.8e-07**), AUC 0.864. No ensembling. TC-MIL also ties SEGA on
-dev and is the only entry with an explicit interviewer-bias control.
+verified non-leaky test baseline (Milintsevich et al. 2023) — micro-F1 0.780 vs
+0.766 (one-sample t over 30 seeds, **p = 4.6e-04**), macro-F1 0.751 vs 0.739
+(p = 0.043, marginal), at AUC 0.864, with no ensembling. The 2-member ensemble
+lifts macro-F1 to 0.810 / AUC 0.874. TC-MIL also ties SEGA on dev and is the
+only entry with an explicit interviewer-bias control.
 
 ### Ablation study (legacy architectures, same protocol)
 
 The full architecture ladder — dialogue-mean → flat MIL → role-aware
 DAMIL-R → symptom-supervised SS-DAMIL-R → TC-MIL — re-trained on the full
-dataset under this exact protocol, with Wilcoxon tests:
-**`doc/report/ABLATION-STUDY.md`** (runs in `results/legacy_aligned/`,
-harness `training/eval_legacy.py`). Headline: TC-MIL significantly beats
+dataset under this exact protocol, with Wilcoxon tests (runs in
+`results/baselines/legacy_aligned/`, harness `src/evaluation/eval_legacy.py`).
+Headline: TC-MIL significantly beats
 flat utterance-MIL (macro-F1 +0.221, p=0.003); role-aware legacy models are
 per-run competitive on K-Fold but trail on every protocol headline.
 
@@ -113,7 +121,7 @@ versions: a **representation bottleneck** at the instance level and an
    probability ensembles and a threshold tuned per fold. The text-only
    DAIC-WOZ literature reports on the **official AVEC2017 split** (train 107 /
    dev 35 / test 47). The honest official-split run of the old model
-   (`results/ss_damil_r_official_v9d`) scored **AUC 0.716 / F1 0.529** — far
+   (`results/baselines/ss_damil_r_v9d`) scored **AUC 0.716 / F1 0.529** — far
    from the dev F1 0.77–0.85 of published work.
 
 ## What TC-MIL changes
@@ -373,45 +381,56 @@ single bge-large GRU. Versus the pre-GRU baseline: K-Fold ensemble
 The legacy pooled-189 comparison (train+dev+test pooled, the leaky protocol
 the old versions used) has been **removed**: it is not a leakage-free number.
 TC-MIL is compared to the legacy architectures under the rigorous protocol
-instead — see `results/ABLATION-STUDY.md`.
+instead — runs in `results/baselines/legacy_aligned/`, harness
+`src/evaluation/eval_legacy.py`.
 
 ## Reproduce
 
-```bash
-# Dev ablations (dev only; never touch test)
-./run_tcmil_ablation.sh     # round 1: encoders / windows / aux
-./run_tcmil_ablation2.sh    # round 2: new encoders, stride, temporal head
+All commands run from the repo root.
 
-# Final official: per-member OOF runs, then the mixed ensemble
-python training/oof_threshold_official.py --encoder_name BAAI/bge-large-en-v1.5 \
-    --n_seeds 10 --output_dir results/tcmil_oof
-python training/oof_threshold_official.py --encoder_name mixedbread-ai/mxbai-embed-large-v1 \
-    --temporal gru --n_seeds 10 --output_dir results/tcmil_oof_gru_mxbai
-python training/combine_oof_ensemble.py \
-    --runs results/tcmil_oof results/tcmil_oof_gru_mxbai \
-    --output results/tcmil_oof_mixed_ensemble/results.json
+```bash
+# Single-model headline (official test, bge-large, pos_weight=1.0)
+python src/training/train_tcmil_official.py \
+    --encoder_name BAAI/bge-large-en-v1.5 --pos_weight 1.0 \
+    --n_seeds 30 --eval_test --threshold_metric prevalence \
+    --output_dir results/single_model/headline_pw1_30seed
+
+# Dev ablations (dev only; never touch test)
+./run_tcmil_ablation_full189.sh
+
+# Final ensemble: per-member OOF runs, then combine (selection by OOF AUC)
+python src/ensemble/oof_threshold_official.py --encoder_name BAAI/bge-large-en-v1.5 \
+    --n_seeds 10 --output_dir results/ensemble/oof/oof_bgelarge_plain
+python src/ensemble/oof_threshold_official.py --encoder_name mixedbread-ai/mxbai-embed-large-v1 \
+    --temporal gru --n_seeds 10 --output_dir results/ensemble/oof/oof_mxbai_gru
+python src/ensemble/combine_oof_ensemble.py \
+    --runs results/ensemble/oof/oof_bgelarge_plain results/ensemble/oof/oof_mxbai_gru \
+    --output results/ensemble/oof/oof_headline/results.json
 
 # Clean CV (GRU + testprev = headline K-Fold; MC ensemble aggregation built in)
-python training/cv_tcmil.py --mode kfold --encoder_name BAAI/bge-large-en-v1.5 \
-    --temporal gru --threshold_mode testprev --output_dir results/tcmil_kfold_gru_testprev
-python training/cv_tcmil.py --mode mc --encoder_name BAAI/bge-large-en-v1.5 \
-    --temporal gru --output_dir results/tcmil_mc_gru
+python src/crossval/cv_tcmil.py --mode kfold --encoder_name BAAI/bge-large-en-v1.5 \
+    --temporal gru --threshold_mode testprev --n_repeats 5 \
+    --output_dir results/cross_validation/kfold_gru_testprev_r5
+python src/crossval/cv_tcmil.py --mode mc --encoder_name BAAI/bge-large-en-v1.5 \
+    --temporal gru --output_dir results/cross_validation/mc_gru_single
 
 # Legacy architecture ladder under the same leak-free protocol
-python training/eval_legacy.py
+python src/evaluation/eval_legacy.py
 ```
 
 ## Files
 
 | File | Role |
 | --- | --- |
-| `tcmil_data.py` | chunking, frozen-encoder embedding + cache (+ e5 prefix), leakage assert |
-| `models/tcmil.py` | gated-attention MIL + symptom aux head + optional GRU/transformer context |
-| `training/train_tcmil_official.py` | official-split protocol |
-| `training/cv_tcmil.py` | K-Fold + Monte Carlo CV (innerval / oof / testprev thresholds) |
-| `training/eval_legacy.py` | legacy architecture ladder under the rigorous protocol |
-| `training/stats_ablation.py` | Wilcoxon / Mann-Whitney U / paired & independent t-tests |
-| `training/interpret_tcmil.py` | interpretability (attention faithfulness, PHQ-8, bias probes) |
-| `training/oof_threshold_official.py` | OOF threshold probe (official protocol) |
-| `training/combine_oof_ensemble.py` | multi-member OOF ensemble + subset selection by OOF AUC |
-| `training/ensemble_tcmil_official.py` | dev-thresholded multi-encoder ensemble |
+| `src/core/tcmil_data.py` | chunking, frozen-encoder embedding + cache (+ e5 prefix), leakage assert |
+| `src/core/models/tcmil.py` | gated-attention MIL + symptom aux head + optional GRU/transformer context |
+| `src/training/train_tcmil_official.py` | official-split protocol (saves per-seed checkpoints) |
+| `src/training/finetune_tcmil.py` | end-to-end encoder fine-tuning (LoRA/bitfit/last_k/full) |
+| `src/crossval/cv_tcmil.py` | K-Fold + Monte Carlo CV (innerval / oof / testprev thresholds) |
+| `src/evaluation/eval_legacy.py` | legacy architecture ladder under the rigorous protocol |
+| `src/statistics/stats_ablation.py` | Wilcoxon / Mann-Whitney U / paired & independent t-tests |
+| `src/interpretability/interpret_tcmil.py` | interpretability (attention faithfulness, PHQ-8, bias probes) |
+| `src/ensemble/oof_threshold_official.py` | OOF threshold probe (official protocol) |
+| `src/ensemble/combine_oof_ensemble.py` | multi-encoder OOF ensemble + subset selection by OOF AUC |
+| `src/ensemble/combine_ft_ensemble.py` | fine-tuned multi-member OOF ensemble |
+| `src/ensemble/ensemble_tcmil_official.py` | dev-thresholded multi-encoder ensemble |

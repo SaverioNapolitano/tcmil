@@ -321,9 +321,25 @@ def train_one_seed_ft(args, seed, train_ivs, sel_ivs, device, log):
         if no_improve >= args.patience and epoch > args.head_warmup_epochs:
             break
 
-    if best_state:
-        model.load_state_dict(best_state, strict=False)
-    return model, best_auc, amp_dtype
+    if best_state is None:
+        # No epoch improved over the init AUC (rare); snapshot current trainable.
+        best_state = {k: v.detach().cpu().clone()
+                      for k, v in model.state_dict().items()
+                      if k in trainable_names}
+    model.load_state_dict(best_state, strict=False)
+    return model, best_auc, amp_dtype, best_state
+
+
+def write_ckpt_config(ckpt_dir: Path, args):
+    """Persist the construction args needed to rebuild FTTCMIL and reload a
+    saved (trainable-only) state dict via load_state_dict(..., strict=False)."""
+    json.dump(
+        {k: getattr(args, k) for k in (
+            "encoder_name", "ft_method", "lora_r", "lora_targets",
+            "unfreeze_last_k", "llrd", "proj_dim", "attn_dim", "dropout",
+            "temporal", "gru_layers", "window", "stride", "max_len",
+            "aux_weight", "pos_weight")},
+        open(ckpt_dir / "config.json", "w"), indent=2)
 
 
 def free(model):
@@ -350,12 +366,21 @@ def run_official(args, device, log, out_dir):
         train_ivs = train_ivs[: args.max_train_bags]
 
     train_prev = float(np.mean([iv["label"] for iv in train_ivs]))
+    ckpt_dir = None
+    if args.save_weights:
+        ckpt_dir = out_dir / "checkpoints"
+        ckpt_dir.mkdir(exist_ok=True)
+        write_ckpt_config(ckpt_dir, args)
     dev_runs, test_runs, per_seed = [], [], []
     dev_labels = test_labels = None
     for i in range(args.n_seeds):
         seed = args.base_seed + i
         t0 = time.time()
-        model, best_auc, amp = train_one_seed_ft(args, seed, train_ivs, dev_ivs, device, log)
+        model, best_auc, amp, best_state = train_one_seed_ft(args, seed, train_ivs, dev_ivs, device, log)
+        if ckpt_dir is not None:
+            # Trainable params only (LoRA adapters / bias / unfrozen layers + MIL
+            # head); reload onto a fresh FTTCMIL(config) with strict=False.
+            torch.save(best_state, ckpt_dir / f"seed_{seed}.pt")
         dp, dev_labels = predict_bags(model, dev_ivs, device, args.micro_batch, amp)
         dev_runs.append(dp)
         m = compute_metrics(dev_labels, (dp >= 0.5).astype(int), dp)
@@ -418,6 +443,12 @@ def run_cv(args, device, log, out_dir):
                                      random_state=args.seed)
         split_iter = sss.split(np.zeros(len(pool)), labels)
 
+    ckpt_dir = None
+    if args.save_weights:
+        ckpt_dir = out_dir / "checkpoints"
+        ckpt_dir.mkdir(exist_ok=True)
+        write_ckpt_config(ckpt_dir, args)
+
     raw, group_preds = [], {}
     oof_prob, oof_label = {}, {}
     pool_np = np.array(pool)
@@ -445,8 +476,10 @@ def run_cv(args, device, log, out_dir):
         group_preds[fold_idx] = []
         for s in range(args.n_seeds):
             run_seed = args.seed + fold_idx * 100 + s
-            model, _, amp = train_one_seed_ft(args, run_seed, inner_train,
-                                              inner_val, device, log)
+            model, _, amp, best_state = train_one_seed_ft(args, run_seed, inner_train,
+                                                          inner_val, device, log)
+            if ckpt_dir is not None:
+                torch.save(best_state, ckpt_dir / f"fold{fold_idx}_seed{run_seed}.pt")
             te_probs, te_labels = predict_bags(model, fold_test, device,
                                                args.micro_batch, amp)
             va_probs, va_labels = predict_bags(model, inner_val, device,
@@ -567,6 +600,10 @@ def main():
     p.add_argument("--threshold_file", default="",
                    help="oof_thresholds.json from --protocol export_oof")
 
+    p.add_argument("--save_weights", action="store_true", default=True,
+                   help="Save per-seed trainable weights (default on; "
+                        "reproducibility / offline ensembling).")
+    p.add_argument("--no_save_weights", dest="save_weights", action="store_false")
     p.add_argument("--smoke", action="store_true",
                    help="2 epochs, 12 train bags, 1 seed — install check only")
     p.add_argument("--max_train_bags", type=int, default=0)

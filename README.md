@@ -1,179 +1,249 @@
-# DAMIL-R: Role-Aware Dual Attention MIL for Depression Detection
+# TC-MIL: Topic-Chunk Multiple-Instance Learning for DAIC-WOZ
 
-DAMIL-R explicitly models interaction between interviewer (Ellie) and participant turns using single-head cross-attention, producing interpretable cross-attention maps and stable MIL classification metrics on the DAIC-WOZ dataset.
+Text-only depression detection on the DAIC-WOZ clinical interview corpus.
+TC-MIL treats each interview as a **bag of dialogue chunks** (sliding windows of
+interviewer→participant exchanges) and classifies it with a small
+gated-attention MIL head over a **frozen sentence encoder**. A single trained
+model significantly beats the strongest verified non-leaky text-only baseline on
+the official AVEC2017 test split, with an explicit interviewer-prompt bias
+control.
 
-## Architecture
-
-```
-Patient Embeddings (P, 384) ──→ Projector ──→ (P, 64) ──┐
-                                                           ├── CrossRoleAttention ──→ Context (P, 64)
-Interviewer Embeddings (I, 384) ──→ Projector ──→ (I, 64)┘           │
-                                                                       │
-Patient (P, 64) ── concat ── Context (P, 64) ──→ Fusion → LayerNorm ──→ Fused (P, 64)
-                                                                       │
-                                                             AttentionPooling ──→ (64,)
-                                                                       │
-                                                              Dropout + Linear ──→ logit
-```
-
-### Design Principles
-
-The architecture and data pipeline are optimized for **small datasets** (~140 interviews in DAIC-WOZ):
-
-1. **Sentence Embeddings** (`all-mpnet-base-v2` + mean pooling): Instead of raw DistilBERT token outputs, we use embeddings explicitly trained for semantic similarity. The model only has to learn to match these high-quality sentence vectors.
-2. **Embedding Noise Injection**: During training, embedding vectors are augmented with Gaussian noise (`std=0.05`), preventing the projector from memorizing continuous representations.
-3. **Instance Dropout (0.15)**: During training, we randomly drop 15% of utterances from both patient and interviewer bags, forcing the model to rely on multiple signals rather than memorizing exact utterance combinations.
-4. **Shared projector**: Both roles are mapped to a common low-dimensional space (768→64) through a single shared `Linear + ReLU` layer.
-5. **Cosine cross-attention**: The cross-attention uses parameter-free **L2-normalized cosine similarity** scaled by a learnable parameter. This prevents Softmax collapse and is highly stable for small datasets.
-6. **Gated Residual Fusion**: Instead of simple addition, fusion uses a GRU-inspired sigmoid gating mechanism, allowing the model to explicitly ignore interviewer context per turn when it isn't helpful.
-7. **Learnable Attention Pooling**: The turn-level attention pooling temperature is dynamically learned. 
-8. **Focal Loss**: Replaces BCE to dynamically scale losses based on prediction confidence, heavily pulling the model to learn about hard-to-classify depressive signals and boosting recall.
-
-### Modules
-
-| Module | Purpose | Learnable Params |
-|--------|---------|-----------------|
-| `Projector` | Shared 768→64 embedding space | ~49.2K |
-| `CrossRoleAttention` | Parameter-free L2 cosine attention + scale param | **1** |
-| `RoleAwareFusion` | Sigmoid-gated residual fusion | ~16.5K |
-| `AttentionPooling` | Tanh-based attention pooling + learnable temp | ~4.1K |
-| `Classifier` | Linear 64→1 | 65 |
-| **Total** | | **~70K** |
-
-## DAMIL-R Version History & Development Matrix
-
-This section documents the technical evolution of the DAMIL-R project. Each version was evaluated using **Monte Carlo Subject-Level CV** or **Stratified Group K-Fold** to ensure clinical validity.
-
-### 1. Performance Leaderboard
-
-| Version | Architecture Key | Protocol | Acc (95% CI) | BAcc (95% CI) | F1 (95% CI) | ROC-AUC (95% CI) | Status |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **v1-v3** | Flat MIL Baselines | MC | ~0.55 | ~0.53 | ~0.39 | 0.574 | Retired |
-| **v4** | Role-Aware (Concat) | MC | 0.715 [0.66, 0.77] | 0.704 [0.65, 0.76] | 0.594 [0.51, 0.67] | 0.777 [0.73, 0.82] | Retired |
-| **v5** | Separate Role Projections | MC | - | 0.554 | 0.435 | 0.635 | Retired |
-| **v6** | Cross-Attn (Sigmoid-gate) | MC | 0.662 | 0.612 | 0.485 | 0.721 | Retired |
-| **v7-Peak** | **L2-Cosine + Gated Residual** | **K-Fold** | **0.715 [0.66, 0.77]** | **0.704 [0.65, 0.76]** | **0.594 [0.51, 0.67]**| **0.803 [0.76, 0.85]** | **SOTA** |
-| **v7-Peak** | L2-Cosine + Gated Residual | MC | 0.715 [0.66, 0.77] | 0.705 [0.65, 0.76] | 0.594 [0.51, 0.67] | 0.777 [0.73, 0.82] | Stable |
-| **v8** | Multi-Head Pooling (r=4) | MC | 0.589 | 0.575 | 0.471 | 0.646 | Rejected |
-| **v8.1** | Multi-Head Pooling (r=2) | MC | 0.563 | 0.565 | 0.431 | 0.638 | Retired |
-| **LoRA** | Fine-tuned Transformer | K-Fold | 0.553 [0.47, 0.64] | 0.596 [0.56, 0.64] | 0.459 [0.39, 0.53] | 0.727 [0.68, 0.77] | Exp |
-| **LoRA** | Fine-tuned Transformer | MC | 0.488 [0.41, 0.57] | 0.554 [0.51, 0.59] | 0.441 [0.38, 0.50] | 0.629 [0.55, 0.71] | Unstable |
-
-### 2. Architectural Evolution
-
-#### **Generation 1: Heuristic Baselines (v1-v3)**
-Simple Multiple Instance Learning (MIL) using mean or max pooling. These models ignored the presence of the interviewer ("Ellie"), leading to high variance and poor sensitivity to interaction-based markers.
-
-#### **Generation 2: Structural Role-Awareness (v4-v5)**
-Introduced an explicit distinction between participant and interviewer turns.
-- **v4:** Concatenated pooled patient/interviewer representations. Showed a massive +20% jump in ROC-AUC, proving that interviewer context is the primary signal for grounding patient responses.
-- **v5:** Attempted separate projection layers; proved too complex for the small dataset (142 samples) and led to mild regression.
-
-#### **Generation 3: Dynamic Interaction (v6-v7)**
-Shifted from fixed concatenation to learned attention.
-- **v6:** Initial cross-attention using sigmoid gating. 
-- **v7 (Peak):** The **Breakthrough Variant**. Introduced **L2-Normalized Cosine Similarity** to stabilize attention and a **Gated Residual Highway** (fusion) to allow the model to skip context when noisy. **Current SOTA (0.803 ROC-AUC).**
-
-#### **Generation 4: Over-parameterization Trials (v8-v8.1)**
-Experimental attempt to add multi-head complexity to the MIL pooling.
-- **Outcome:** Substantial performance drop (~0.16 ROC-AUC).
-- **Lesson:** On clinical datasets with <200 samples, single-head attention is superior as it prevents the sparse depressive signals from being "split" too thin across multiple heads.
-
-#### **Generation 5: Clinical Adaptation (LoRA)**
-End-to-end fine-tuning of the MPNet encoder using Low-Rank Adaptation.
-- **Outcome:** Peak performance on a single split (0.75 ROC-AUC, 1.0 Recall), but lower generalization across 5 folds (0.727 ROC-AUC).
-- **Lesson:** Frozen feature extraction remains the benchmark for robustness; fine-tuning leads to "subject identity overfitting" where the model memorizes specific patient voices instead of generic symptoms.
+> This README is the entry point. Deeper method/ablation history lives in
+> [`README_TCMIL.md`](README_TCMIL.md); the encoder fine-tuning plan lives in
+> [`README_FINETUNE.md`](README_FINETUNE.md) and [`cluster/FT_JOBS.md`](cluster/FT_JOBS.md).
 
 ---
 
-## Project Structure
+## Headline results
 
-### Dataset Layer
+All on the **official AVEC2017 split** (train 107 / dev 35 / test 47). The
+encoder is frozen; splits are subject-disjoint by construction
+(`assert_no_leakage`). The headline is the **single model** — for a fair
+comparison with the text-only literature, which reports a single trained model's
+per-seed mean ± std (no seed/encoder/member ensembling). The ensemble is an
+optional boost.
 
-**`dataset.py`**
-- `load_interviews_with_roles()` — loads both participant and interviewer (Ellie) utterances per interview
-- `load_all_interviews_with_roles()` — combines all splits for CV
-- Existing `load_interviews()` and `load_all_interviews()` remain untouched for backward compatibility
+| Model | Protocol | AUC | macro-F1 | micro-F1 |
+| --- | --- | --- | --- | --- |
+| **TC-MIL single** (bge-large, pos_weight=1.0) | test, 30-seed per-seed mean ± std | **0.864 ± 0.011** | **0.751 ± 0.031** | **0.780 ± 0.019** |
+| TC-MIL single — seed-ensemble (prevalence threshold) | test | 0.866 | 0.770 | — |
+| TC-MIL ensemble (bge-large plain + mxbai GRU, OOF-prev) | test | 0.874 | 0.810 | — |
+| Milintsevich et al. 2023 (cleanest non-leaky baseline) | test, 5-seed mean | — | 0.739 | 0.766 |
 
-### Model Layer
+- The **single** TC-MIL model exceeds the Milintsevich baseline on macro-F1
+  (0.751 vs 0.739) and micro-F1 (0.780 vs 0.766) with no ensembling and no
+  test-set tuning. Threshold is set a-priori by **prevalence matching** (no dev
+  labels), which is the stable choice on the 35-subject dev set.
+- The **2-member ensemble** (architectural diversity: a plain member + a GRU
+  member) lifts test macro-F1 to 0.810 / AUC 0.874. Members are chosen by **OOF
+  AUC only** — no test statistic enters selection.
 
-**`models/damil_r.py`**
+Source files: single → `results/single_model/headline_pw1_30seed/`;
+ensemble → `results/ensemble/oof/oof_headline/`.
 
-### Architecture Highlights
+### Cross-validation (clean pool: train+dev, official test excluded)
 
--   **Dual-Role Representation:** Shared projection to 64d for both participant and interviewer.
--   **L2-Normalized Cosine Attention:** Parameter-free similarity scoring with a learnable scale for stability.
--   **Gated Residual Fusion:** Highway-style gating to incorporate interviewer context.
--   **Single-Head Attention Pooling:** Learnable MIL attention to aggregate interview-level features.
--   **Focal Loss:** Weighted mining of rare positive (depressive) samples.
+| Protocol | AUC | macro-F1 | F1 |
+| --- | --- | --- | --- |
+| Repeated K-Fold (5×5, GRU, testprev), seed-ensemble | 0.820 | 0.735 | 0.628 |
+| Monte Carlo (10 seeds, 3-member, testprev), seed-ensemble | 0.883 | 0.804 | 0.727 |
 
-- `CrossRoleAttention` — parameter-free scaled dot-product attention (patient queries interviewer)
-- `RoleAwareFusion` — concatenation + linear projection + residual + LayerNorm
-- `AttentionPooling` — tanh-based learned attention scorer with temperature control
-- `DAMILRClassifier` — wires all modules together, returns logit + both attention weight sets (now supports input noise injection)
+Source: `results/cross_validation/`.
 
-### Training Layer
+### Interviewer-prompt bias control (Burdisso et al. 2024)
 
-**`training/train_damil_r.py`**
-- `DualRoleBagDataset` + `collate_dual_role_bags` — dual-role padding and optional instance dropout augmentation
-- `precompute_dual_role_embeddings()` — Sentence transformer embeddings with mean pooling
-- `train_epoch()` — Focal Loss objective, optional entropy regularization, embedding noise pass
-- ReduceLROnPlateau scheduler, val-loss early stopping, threshold tuning on dev
+Removing the `Interviewer:` lines from every chunk (`--participant_only`) keeps
+performance — dev seed-ensemble AUC **0.902** (participant-only) vs **0.895**
+(full dialogue). The signal does **not** come from the interviewer-prompt
+shortcut that inflates much of the text-only literature.
+Source: `results/design_ablations/dialogue_vs_ponly/`.
 
-**`training/cv_damil_r.py`**
-- Monte Carlo CV using shared `run_monte_carlo_cv()` framework
-- Pre-computes all embeddings once before CV loop
+---
 
-### Evaluation Layer
+## Method
 
-**`evaluation/evaluate_damil_r.py`**
-- Loads trained checkpoint, evaluates on train/dev/test
-- Generates ROC, PR, confusion matrix, probability histogram, plus cross-attention heatmaps
-- Output format identical to baseline
+**Why chunks.** Earlier role-aware models (DAMIL-R / SS-DAMIL-R, 35 versions)
+built bags from individual participant turns. Most DAIC-WOZ turns are
+backchannels ("yeah", "mhm") that a frozen encoder maps to near-identical
+vectors — a representation ceiling no pooling can break. TC-MIL instances are
+**sliding windows of `window` consecutive exchanges** rendered as dialogue text
+(`window=4, stride=2` → ~28 chunks/interview, ~65 words each), restoring the
+topical context (sleep, mood, energy) that PHQ-8 symptoms attach to. This is the
+single biggest lever.
 
-### Visualization Layer
+**The model** (`src/core/models/tcmil.py`, ~120K–224K params):
 
-**`plots/cross_attention.py`**
-- `plot_cross_attention_heatmap()` — seaborn heatmap (patient × interviewer)
-- `plot_turn_attention_histogram()` — weight distribution + concentration
-- `plot_cross_attention_entropy_histogram()` — entropy diagnostic (detects attention collapse)
-- `plot_cross_attention_entropy_by_class()` — entropy separated by label
-- `generate_cross_attention_report()` — markdown report of top-attended turns
+1. Frozen sentence encoder (default `BAAI/bge-large-en-v1.5`), mean-pooled +
+   L2-normalized per chunk. Embeddings are cached (`cache/tcmil/`).
+2. Small projector → optional **1-layer BiGRU** temporal context layer over the
+   chunk sequence (`--temporal gru`; +0.02–0.03 dev AUC).
+3. Classic **gated-attention MIL pooling** (Ilse & Welling 2018).
+4. **Symptom aux head** predicting the 8 binarized PHQ-8 items as a pure
+   regularizer (shares the backbone, does not feed the main logit).
 
-## Usage
+No focal loss, mixup, SWA, or diversity losses — over-regularization was the
+failure mode of the previous era at n≈107. The winning recipe drops the
+recall-biasing class weight (`pos_weight=1.0`).
 
-```bash
-# Train DAMIL-R (with default sentence-transformer, proj_dim=64, instance_dropout=0.15)
-python training/train_damil_r.py --data_dir data --output_dir results/damil_r
+**Protocol** (`src/training/train_tcmil_official.py`): train on official train,
+select + threshold on dev, evaluate test **once**. CV
+(`src/crossval/cv_tcmil.py`) is Stratified Group K-Fold / Monte Carlo over
+train+dev only, so the official test stays untouched. Thresholds come from dev
+prevalence, out-of-fold (OOF) probabilities, or unlabeled test-score prevalence
+(`testprev`) — never from test labels.
 
-# Monte Carlo CV
-python training/cv_damil_r.py --data_dir data --output_dir results/damil_r_cv
+---
 
-# Standalone evaluation
-python evaluation/evaluate_damil_r.py --model_dir results/damil_r --data_dir data
+## Repository layout
+
+```
+src/
+  core/
+    tcmil_data.py            chunking, frozen-encoder embedding + cache, leakage assert
+    dataset.py               raw interview / role loading
+    preprocess_raw.py        transcript preprocessing
+    models/tcmil.py          gated-attention MIL + aux head + GRU/transformer context
+    models/{damil_r,ss_damil_r}.py   legacy architectures (ablation ladder)
+    utils/                   metrics, evaluation, stats, sam, plots
+  training/
+    train_tcmil_official.py  official-split protocol (saves per-seed checkpoints)
+    finetune_tcmil.py        end-to-end encoder fine-tuning (LoRA/bitfit/last_k/full)
+    dapt_mlm.py              domain-adaptive MLM pretraining on TRAIN text only
+  crossval/cv_tcmil.py       K-Fold + Monte Carlo CV (innerval / oof / testprev thresholds)
+  ensemble/
+    oof_threshold_official.py    OOF threshold probe (official protocol)
+    combine_oof_ensemble.py      frozen multi-encoder OOF ensemble
+    combine_ft_ensemble.py       fine-tuned multi-member OOF ensemble
+    ensemble_tcmil_official.py   dev-thresholded multi-encoder ensemble
+  evaluation/eval_legacy.py  legacy architecture ladder under the rigorous protocol
+  evaluation/mc_dropout_eval.py
+  interpretability/interpret_tcmil.py   attention faithfulness, PHQ-8, bias probes
+  plotting/  statistics/
+
+results/
+  single_model/        official-split single-model runs (headline_pw1_30seed = canonical)
+  ensemble/            OOF + multi-member ensembles (oof/oof_headline = best)
+  cross_validation/    K-Fold + Monte Carlo
+  design_ablations/    e.g. dialogue_vs_ponly (interviewer-bias control)
+  baselines/           legacy architectures under the rigorous protocol
+  interpretability/    faithfulness / saliency artifacts
+  stats/  logs/
+
+cluster/               SLURM scripts + configs for encoder fine-tuning (see FT_JOBS.md)
+paper/                 LaTeX manuscript, figures, refs
+doc/report/            design notes, baseline verification, backlog/roadmap
 ```
 
-## Evaluation Strategy: Hardened & Group-Aware
+---
 
-The codebase supports two rigorous evaluation modes ensuring zero context-leakage:
-1.  **Monte Carlo (Random Splits):** Repeated stratified shuffle splits at the subject level.
-2.  **Stratified Group K-Fold (Determinstic):** Exhaustive K-Fold partitioning (standard $K=5$) ensuring each subject is evaluated exactly once in the hold-out set.
+## Saved weights & reproducibility
 
-To run the K-Fold CV:
+Training **persists trained weights**, so every reported number can be
+re-inferred without retraining (the code is to be open-sourced):
+
+- `train_tcmil_official.py` saves `checkpoints/config.json` (model-construction
+  args) + one `checkpoints/seed_<seed>.pt` per seed. The encoder is frozen, so
+  these are the small MIL-head state dicts.
+- `finetune_tcmil.py` saves `checkpoints/config.json` + per-seed
+  `seed_<seed>.pt` (official) / `fold<f>_seed<s>.pt` (CV). For FT, only the
+  **trainable** parameters are stored (LoRA adapters / bias terms / unfrozen
+  layers + MIL head); reload onto a fresh `FTTCMIL(config)` with
+  `load_state_dict(..., strict=False)`. On by default; disable with
+  `--no_save_weights`.
+
+Per-run `results.json` additionally stores per-seed metrics, ensemble metrics,
+dev/test probabilities, labels, thresholds-by-strategy, and full args — enough
+to rebuild every table and to assemble ensembles offline from saved
+probabilities without retraining.
+
+---
+
+## Reproduce
+
+All commands run from the repo root (`python` resolves `src.*` via `sys.path`).
+Dependencies via `uv` (`pyproject.toml` / `uv.lock`).
+
 ```bash
-python training/cv_damil_r.py --mode kfold --n_folds 5
+# Single-model headline (official test, bge-large, pos_weight=1.0)
+python src/training/train_tcmil_official.py \
+    --encoder_name BAAI/bge-large-en-v1.5 --pos_weight 1.0 \
+    --n_seeds 30 --eval_test --threshold_metric prevalence \
+    --output_dir results/single_model/headline_pw1_30seed
+
+# Interviewer-bias control (dev only; never touches test)
+python src/training/train_tcmil_official.py \
+    --encoder_name BAAI/bge-large-en-v1.5 --temporal gru --participant_only \
+    --output_dir results/design_ablations/dialogue_vs_ponly/ablate_ponly_gru
+
+# Ensemble: per-member OOF runs, then combine (selection by OOF AUC only)
+python src/ensemble/oof_threshold_official.py \
+    --encoder_name BAAI/bge-large-en-v1.5 --n_seeds 10 \
+    --output_dir results/ensemble/oof/oof_bgelarge_plain
+python src/ensemble/oof_threshold_official.py \
+    --encoder_name mixedbread-ai/mxbai-embed-large-v1 --temporal gru \
+    --n_seeds 10 --output_dir results/ensemble/oof/oof_mxbai_gru
+python src/ensemble/combine_oof_ensemble.py \
+    --runs results/ensemble/oof/oof_bgelarge_plain results/ensemble/oof/oof_mxbai_gru \
+    --output results/ensemble/oof/oof_headline/results.json
+
+# Clean CV (GRU + testprev = headline K-Fold; MC ensemble aggregation built in)
+python src/crossval/cv_tcmil.py --mode kfold --encoder_name BAAI/bge-large-en-v1.5 \
+    --temporal gru --threshold_mode testprev --n_repeats 5 \
+    --output_dir results/cross_validation/kfold_gru_testprev_r5
+
+# Legacy architecture ladder under the same leak-free protocol
+python src/evaluation/eval_legacy.py
 ```
 
-## Verification
+---
 
-| Test | Result |
-|------|--------|
-| `CrossRoleAttention` shapes | ✅ `(P,d)` context, `(P,I)` attention, rows sum to 1.0 |
-| `RoleAwareFusion` shapes | ✅ `(P,d)` fused output with residual + LayerNorm |
-| `AttentionPooling` shapes | ✅ `(d,)` pooled, `(P,)` weights summing to 1.0 |
-| `DAMILRClassifier` forward | ✅ scalar logit, correct attention shapes |
-| `DAMILRClassifier` with `proj_dim=128` | ✅ 140K trainable params, 11 parameter groups |
-| `forward_batch` variable sizes | ✅ correctly handles `[10,7,4]` patient, `[5,3,2]` interviewer |
-| Gradient flow | ✅ all 11 parameter groups receive gradients |
-| Dataset loading with roles | ✅ 106 train interviews, both roles populated |
-| CV pipeline | ✅ 15 runs complete, all metrics computed |
+## Encoder fine-tuning (cluster)
+
+Fine-tuning the sentence encoder *through* the MIL objective is the lever most
+likely to raise the frozen ranking ceiling (AUC ~0.86). The full plan, grid,
+decision rules and leakage guarantees are in
+[`README_FINETUNE.md`](README_FINETUNE.md); the SLURM job order is in
+[`cluster/FT_JOBS.md`](cluster/FT_JOBS.md).
+
+```bash
+pip install peft                                   # only new dependency
+python src/training/finetune_tcmil.py --smoke --ft_method lora \
+    --output_dir results/ft/smoke                  # ~2 min install check
+
+# Stage 1 — dev-selection grid (20 configs × 5 seeds, no test)
+sbatch cluster/ft_job2_grid.sbatch                 # or: bash cluster/run_ft_grid.sh
+python src/statistics/summarize_finetune.py --root results/ft
+
+# >>> edit cluster/finalists_configs.txt + cluster/cv_configs.txt with the
+#     grid winners (top-2 by 5-seed dev AUC + frozen control) <<<
+
+# Stage 2 — finalists (OOF threshold + 10-seed official test)
+sbatch cluster/ft_job3_finalists.sbatch            # or: bash cluster/run_ft_finalists.sh
+# Stage 3 — CV for the winner vs frozen control
+sbatch cluster/ft_job4_cv.sbatch                   # or: bash cluster/run_ft_cv.sh
+
+# Optional: ensemble fine-tuned members offline (no retraining)
+python src/ensemble/combine_ft_ensemble.py \
+    --member results/ft/oof_winner1 results/ft/official_winner1 \
+    --member results/ft/oof_winner2 results/ft/official_winner2 \
+    --output results/ft/ft_ensemble/results.json
+```
+
+**Launch readiness.** The single-model FT pipeline is turnkey (grid →
+summarize → finalists → CV); `finalists_configs.txt` and `cv_configs.txt` ship
+with **placeholder flags by design** — edit them with the Stage-1 grid winners
+before submitting jobs 3 and 4. The FT ensemble is assembled offline by
+`combine_ft_ensemble.py` from the OOF + official runs each finalist already
+produces (test probabilities are saved), so no extra training is needed.
+
+---
+
+## Status
+
+- [x] TC-MIL single-model headline, ensemble, CV, bias control (frozen encoder)
+- [x] Trained weights saved for all training/fine-tuning runs
+- [ ] Encoder fine-tuning runs on the cluster (single model + ensemble)
+- [ ] Zero-shot E-DAIC transfer test (train DAIC-WOZ, test E-DAIC)
+- [ ] Paper write-up
+
+See [`todo.md`](todo.md) for the working list.
