@@ -4,7 +4,7 @@
 #   ./cluster/run_ft_finalists.sh 2       -> only line 2 (SLURM array task)
 # Per finalist:
 #   a) export_oof : nested K-Fold fine-tuning per fold -> leakage-free OOF threshold
-#   b) official   : 10 seeds, dev early stop, test ONCE with the OOF threshold
+#   b) official   : 30 seeds, dev early stop, test ONCE with the OOF threshold
 # Configs (EDIT after the grid): cluster/finalists_configs.txt
 set -e
 cd "$(dirname "$0")/.."
@@ -22,7 +22,7 @@ run_line() {
   echo "=== [$(date +%H:%M:%S)] finalist $name: official test ==="
   # shellcheck disable=SC2086
   python src/training/finetune_tcmil.py \
-    --protocol official --n_seeds 10 --eval_test \
+    --protocol official --n_seeds 30 --eval_test \
     --threshold_file "results/ft/oof_$name/oof_thresholds.json" \
     --output_dir "results/ft/official_$name" $flags
 }
