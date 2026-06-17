@@ -20,7 +20,7 @@ run_line() {
   flags=$(echo "$1" | cut -d'|' -f2)
   echo "=== [$(date +%H:%M:%S)] $name ==="
   # shellcheck disable=SC2086
-  python src/training/finetune_tcmil.py \
+  uv run python src/training/finetune_tcmil.py \
     --protocol official --n_seeds 5 \
     --output_dir "results/ft/grid_$name" $flags
 }

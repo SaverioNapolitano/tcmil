@@ -16,12 +16,12 @@ run_line() {
   flags=$(echo "$1" | cut -d'|' -f2)
   echo "=== [$(date +%H:%M:%S)] finalist $name: OOF threshold probe ==="
   # shellcheck disable=SC2086
-  python src/training/finetune_tcmil.py \
+  uv run python src/training/finetune_tcmil.py \
     --protocol export_oof --n_folds 5 --n_seeds 3 \
     --output_dir "results/ft/oof_$name" $flags
   echo "=== [$(date +%H:%M:%S)] finalist $name: official test ==="
   # shellcheck disable=SC2086
-  python src/training/finetune_tcmil.py \
+  uv run python src/training/finetune_tcmil.py \
     --protocol official --n_seeds 30 --eval_test \
     --threshold_file "results/ft/oof_$name/oof_thresholds.json" \
     --output_dir "results/ft/official_$name" $flags

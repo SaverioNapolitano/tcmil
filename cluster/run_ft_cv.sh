@@ -16,15 +16,15 @@ run_line() {
   flags=$(echo "$1" | cut -d'|' -f2)
   echo "=== [$(date +%H:%M:%S)] $name kfold ==="
   # shellcheck disable=SC2086
-  python src/training/finetune_tcmil.py --protocol kfold --n_folds 5 --n_seeds 5 \
+  uv run python src/training/finetune_tcmil.py --protocol kfold --n_folds 5 --n_seeds 5 \
     --threshold_mode testprev --output_dir "results/ft/kfold_$name" $flags
   echo "=== [$(date +%H:%M:%S)] $name kfold repeat 2 (seed 1042) ==="
   # shellcheck disable=SC2086
-  python src/training/finetune_tcmil.py --protocol kfold --n_folds 5 --n_seeds 5 \
+  uv run python src/training/finetune_tcmil.py --protocol kfold --n_folds 5 --n_seeds 5 \
     --threshold_mode testprev --seed 1042 --output_dir "results/ft/kfold_${name}_r2" $flags
   echo "=== [$(date +%H:%M:%S)] $name mc ==="
   # shellcheck disable=SC2086
-  python src/training/finetune_tcmil.py --protocol mc --n_splits 5 --n_seeds 5 \
+  uv run python src/training/finetune_tcmil.py --protocol mc --n_splits 5 --n_seeds 5 \
     --threshold_mode testprev --output_dir "results/ft/mc_$name" $flags
 }
 

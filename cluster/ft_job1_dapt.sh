@@ -16,5 +16,5 @@
 set -e
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p results/ft/logs
-python src/training/dapt_mlm.py --output_dir checkpoints/dapt_bge_large
+uv run python src/training/dapt_mlm.py --output_dir checkpoints/dapt_bge_large
 echo "=== JOB1 DAPT DONE ==="
