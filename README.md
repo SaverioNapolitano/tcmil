@@ -211,16 +211,16 @@ python src/training/finetune_tcmil.py --smoke --ft_method lora \
     --output_dir results/ft/smoke                  # ~2 min install check
 
 # Stage 1 — dev-selection grid (20 configs × 5 seeds, no test)
-sbatch cluster/ft_job2_grid.sbatch                 # or: bash cluster/run_ft_grid.sh
+sbatch cluster/ft_job2_grid.sh                 # or: bash cluster/run_ft_grid.sh
 python src/statistics/summarize_finetune.py --root results/ft
 
 # >>> edit cluster/finalists_configs.txt + cluster/cv_configs.txt with the
 #     grid winners (top-2 by 5-seed dev AUC + frozen control) <<<
 
 # Stage 2 — finalists (OOF threshold + 10-seed official test)
-sbatch cluster/ft_job3_finalists.sbatch            # or: bash cluster/run_ft_finalists.sh
+sbatch cluster/ft_job3_finalists.sh            # or: bash cluster/run_ft_finalists.sh
 # Stage 3 — CV for the winner vs frozen control
-sbatch cluster/ft_job4_cv.sbatch                   # or: bash cluster/run_ft_cv.sh
+sbatch cluster/ft_job4_cv.sh                   # or: bash cluster/run_ft_cv.sh
 
 # Optional: ensemble fine-tuned members offline (no retraining)
 python src/ensemble/combine_ft_ensemble.py \

@@ -78,7 +78,7 @@ python training/finetune_tcmil.py --smoke --ft_method lora \
 python training/dapt_mlm.py --output_dir checkpoints/dapt_bge_large
 
 # 2. Stage 1 — dev-selection grid (20 configs x 5 seeds, no test)
-sbatch cluster/slurm_ft_grid.sbatch    # or: bash cluster/run_ft_grid.sh
+sbatch cluster/slurm_ft_grid.sh    # or: bash cluster/run_ft_grid.sh
 python training/summarize_finetune.py --root results/ft   # grid table
 
 # 3. Stage 2 — finalists (EDIT the FINALISTS array first, see decision rules)

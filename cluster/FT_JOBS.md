@@ -3,16 +3,16 @@
 Four numbered SLURM scripts. Just `sbatch` them in order. Arrays are throttled
 to **4 concurrent tasks** (`%4`) to respect the 4-parallel-job cap. Before the
 first submit: `pip install peft` and adjust the `##SBATCH --partition/--account`
-lines in each `.sbatch` to your cluster.
+lines in each `.sh` to your cluster.
 
 ## The jobs
 
 | # | file | what | array | needs | edit first? |
 |---|------|------|-------|-------|-------------|
-| 1 | `ft_job1_dapt.sbatch` | DAPT MLM pretrain → `checkpoints/dapt_bge_large` | — | — | no (optional) |
-| 2 | `ft_job2_grid.sbatch` | Stage-1 grid, 20 configs, dev-only 5-seed | `1-20%4` | job 1 (for DAPT lines 19-20) | no |
-| 3 | `ft_job3_finalists.sbatch` | Stage-2: OOF threshold + 10-seed official **test** | `1-3%4` | job 2 + edit configs | **yes** |
-| 4 | `ft_job4_cv.sbatch` | Stage-3: K-Fold(+repeat)+MC, winner vs frozen | `1-2%4` | job 2 + edit configs | **yes** |
+| 1 | `ft_job1_dapt.sh` | DAPT MLM pretrain → `checkpoints/dapt_bge_large` | — | — | no (optional) |
+| 2 | `ft_job2_grid.sh` | Stage-1 grid, 20 configs, dev-only 5-seed | `1-20%4` | job 1 (for DAPT lines 19-20) | no |
+| 3 | `ft_job3_finalists.sh` | Stage-2: OOF threshold + 10-seed official **test** | `1-3%4` | job 2 + edit configs | **yes** |
+| 4 | `ft_job4_cv.sh` | Stage-3: K-Fold(+repeat)+MC, winner vs frozen | `1-2%4` | job 2 + edit configs | **yes** |
 
 Configs (one `name|flags` per line):
 - job 2 → `cluster/ft_grid_configs.txt` (ready; 20 lines)
@@ -23,18 +23,18 @@ Configs (one `name|flags` per line):
 
 ```bash
 # --- optional DAPT arm (skip if not using dapt_* grid configs) ---
-d=$(sbatch --parsable cluster/ft_job1_dapt.sbatch)
+d=$(sbatch --parsable cluster/ft_job1_dapt.sh)
 
 # --- Stage 1: grid (depends on DAPT only for lines 19-20) ---
-g=$(sbatch --parsable --dependency=afterok:$d cluster/ft_job2_grid.sbatch)
-#   no DAPT? instead:  g=$(sbatch --parsable cluster/ft_job2_grid.sbatch)   # and set --array=1-18%4
+g=$(sbatch --parsable --dependency=afterok:$d cluster/ft_job2_grid.sh)
+#   no DAPT? instead:  g=$(sbatch --parsable cluster/ft_job2_grid.sh)   # and set --array=1-18%4
 
 # >>> when job 2 finishes: run `python training/summarize_finetune.py` and
 #     edit finalists_configs.txt + cv_configs.txt with the winners <<<
 
 # --- Stage 2 + Stage 3 (independent of each other, both need the grid) ---
-sbatch --dependency=afterok:$g cluster/ft_job3_finalists.sbatch
-sbatch --dependency=afterok:$g cluster/ft_job4_cv.sbatch
+sbatch --dependency=afterok:$g cluster/ft_job3_finalists.sh
+sbatch --dependency=afterok:$g cluster/ft_job4_cv.sh
 ```
 
 Or, fully manual (no dependencies): `sbatch job1` → wait → `sbatch job2` → wait,

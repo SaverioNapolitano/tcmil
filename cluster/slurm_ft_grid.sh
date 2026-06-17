@@ -11,5 +11,5 @@
 
 # One grid config per array task (lines of cluster/ft_grid_configs.txt).
 # DAPT configs (lines 19-20) need checkpoints/dapt_bge_large to exist first:
-#   sbatch --dependency=afterok:<dapt_job> cluster/slurm_ft_grid.sbatch
+#   sbatch --dependency=afterok:<dapt_job> cluster/slurm_ft_grid.sh
 bash cluster/run_ft_grid.sh "$SLURM_ARRAY_TASK_ID"

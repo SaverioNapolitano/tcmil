@@ -14,8 +14,8 @@
 # 20 configs in cluster/ft_grid_configs.txt, one per array task, throttled to 4
 # concurrent (%4). Lines 19-20 are DAPT configs -> need JOB 1 done first, so
 # submit with a dependency:
-#   d=$(sbatch --parsable cluster/ft_job1_dapt.sbatch)
-#   sbatch --dependency=afterok:$d cluster/ft_job2_grid.sbatch
+#   d=$(sbatch --parsable cluster/ft_job1_dapt.sh)
+#   sbatch --dependency=afterok:$d cluster/ft_job2_grid.sh
 # If you skip DAPT, set --array=1-18%4 above.
 set -e
 cd "$SLURM_SUBMIT_DIR"
