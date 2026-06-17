@@ -1357,7 +1357,9 @@ clinically grounded, and free of the interviewer-prompt shortcut, while being
 honest that its attention is not a faithful per-instance saliency. A matched
 two-encoder ensemble raises macro-F1 to 0.833; the remaining headroom toward the
 multi-branch fusion systems lies along the one axis we leave to future work:
-encoder fine-tuning.
+encoder fine-tuning. The source code and the trained network weights are
+available at \url{https://github.com/SaverioNapolitano/tcmil} to ensure
+reproducibility.
 
 \begin{thebibliography}{00}
 \bibitem{gratch2014} J. Gratch, R. Artstein, G. Lucas, G. Stratou, S. Scherer,
@@ -1407,14 +1409,5 @@ in \emph{Proc. NAACL}, 2019.
 \bibitem{deyoung2020} J. DeYoung et al., ``ERASER: A benchmark to evaluate
 rationalized NLP models,'' in \emph{Proc. ACL}, 2020.
 \end{thebibliography}
-
-\vspace{6pt}
-\noindent\footnotesize\emph{Reproducibility.} All numbers derive from the
-\texttt{results/full189/} artifacts and the harness in \texttt{training/}
-(\texttt{train\_tcmil\_official.py}, \texttt{cv\_tcmil.py},
-\texttt{eval\_legacy.py}, \texttt{stats\_ablation.py},
-\texttt{interpret\_tcmil.py}). The official-split, cross-validation, ablation,
-statistical-test and interpretability tables are regenerable from these
-scripts under the protocol of \Cref{sec:protocol}.
 
 \end{document}
