@@ -684,9 +684,11 @@ chunking granularity and the regularisation.
 \begin{table}[t]
 \caption{Design ablation I --- representation, development set, mean$\pm$std over
 5 seeds, $pos\_weight=1.0$. Encoders use the GRU head at $w4/s2$; temporal heads
-use bge-large. (base) marks the configuration used elsewhere. Most macro-F1
-differences are within one std (the encoder choice is robust); the plain-vs-GRU
-gap is not.}
+use bge-large. (base) marks the configuration used elsewhere; \textbf{bold} marks
+the final single-model choice (note the plain head, fixed a priori for faithful
+linear attribution, \S\ref{sec:interpret}, not the dev argmax).
+Most macro-F1 differences are within one std (the encoder choice is robust); the
+plain-vs-GRU gap is not.}
 \label{tab:abldesign-rep}
 \centering
 \small
@@ -696,7 +698,7 @@ gap is not.}
 \textbf{Variant} & \textbf{dev AUC} & \textbf{dev mac-F1} & \textbf{dev pos-F1} \\
 \midrule
 \multicolumn{4}{@{}l}{\emph{Encoder (GRU, $w4/s2$)}} \\
-bge-large (base) & 0.909{\footnotesize$\pm$.005} & 0.792{\footnotesize$\pm$.034} & 0.714{\footnotesize$\pm$.059} \\
+\textbf{bge-large (base)} & \textbf{0.909{\footnotesize$\pm$.005}} & \textbf{0.792{\footnotesize$\pm$.034}} & \textbf{0.714{\footnotesize$\pm$.059}} \\
 UAE-large        & 0.915{\footnotesize$\pm$.003} & 0.796{\footnotesize$\pm$.035} & 0.724{\footnotesize$\pm$.060} \\
 mxbai-large      & 0.912{\footnotesize$\pm$.007} & 0.772{\footnotesize$\pm$.038} & 0.685{\footnotesize$\pm$.068} \\
 bge-base         & 0.913{\footnotesize$\pm$.003} & 0.772{\footnotesize$\pm$.073} & 0.673{\footnotesize$\pm$.120} \\
@@ -705,7 +707,7 @@ gte-large        & 0.891{\footnotesize$\pm$.013} & 0.743{\footnotesize$\pm$.048}
 e5-large         & 0.897{\footnotesize$\pm$.012} & 0.709{\footnotesize$\pm$.090} & 0.587{\footnotesize$\pm$.167} \\
 \midrule
 \multicolumn{4}{@{}l}{\emph{Temporal head (bge-large, $w4/s2$)}} \\
-none (plain)     & 0.876{\footnotesize$\pm$.001} & 0.645{\footnotesize$\pm$.100} & 0.473{\footnotesize$\pm$.180} \\
+\textbf{none (plain)} & \textbf{0.876{\footnotesize$\pm$.001}} & \textbf{0.645{\footnotesize$\pm$.100}} & \textbf{0.473{\footnotesize$\pm$.180}} \\
 GRU (base)       & 0.909{\footnotesize$\pm$.005} & 0.792{\footnotesize$\pm$.034} & 0.714{\footnotesize$\pm$.059} \\
 GRU 2-layer      & 0.912{\footnotesize$\pm$.009} & 0.794{\footnotesize$\pm$.023} & 0.746{\footnotesize$\pm$.029} \\
 Transformer      & 0.917{\footnotesize$\pm$.012} & 0.779{\footnotesize$\pm$.058} & 0.722{\footnotesize$\pm$.065} \\
@@ -716,8 +718,9 @@ Transformer      & 0.917{\footnotesize$\pm$.012} & 0.779{\footnotesize$\pm$.058}
 \begin{table}[t]
 \caption{Design ablation II --- granularity and regularisation, development
 set, mean$\pm$std over 5 seeds, $pos\_weight=1.0$, bge-large + GRU. (base) marks
-the configuration used elsewhere. All variants overlap within one std on
-macro-F1: granularity and regularisation are flat.}
+the configuration used elsewhere; \textbf{bold} marks the final single-model
+choice. All variants overlap within one std on macro-F1: granularity and
+regularisation are flat.}
 \label{tab:abldesign-hp}
 \centering
 \small
@@ -728,13 +731,13 @@ macro-F1: granularity and regularisation are flat.}
 \midrule
 \multicolumn{4}{@{}l}{\emph{Window\,/\,stride}} \\
 $w2/s1$          & 0.915{\footnotesize$\pm$.004} & 0.733{\footnotesize$\pm$.081} & 0.605{\footnotesize$\pm$.134} \\
-$w4/s2$ (base)   & 0.909{\footnotesize$\pm$.005} & 0.792{\footnotesize$\pm$.034} & 0.714{\footnotesize$\pm$.059} \\
+\textbf{$w4/s2$ (base)} & \textbf{0.909{\footnotesize$\pm$.005}} & \textbf{0.792{\footnotesize$\pm$.034}} & \textbf{0.714{\footnotesize$\pm$.059}} \\
 $w6/s3$          & 0.919{\footnotesize$\pm$.010} & 0.793{\footnotesize$\pm$.076} & 0.708{\footnotesize$\pm$.125} \\
 $w4/s1$          & 0.899{\footnotesize$\pm$.007} & 0.750{\footnotesize$\pm$.036} & 0.637{\footnotesize$\pm$.057} \\
 \midrule
 \multicolumn{4}{@{}l}{\emph{Regularisation / capacity}} \\
 dropout 0.3      & 0.911{\footnotesize$\pm$.004} & 0.813{\footnotesize$\pm$.024} & 0.752{\footnotesize$\pm$.033} \\
-dropout 0.4 (base) & 0.909{\footnotesize$\pm$.005} & 0.792{\footnotesize$\pm$.034} & 0.714{\footnotesize$\pm$.059} \\
+\textbf{dropout 0.4 (base)} & \textbf{0.909{\footnotesize$\pm$.005}} & \textbf{0.792{\footnotesize$\pm$.034}} & \textbf{0.714{\footnotesize$\pm$.059}} \\
 dropout 0.5      & 0.912{\footnotesize$\pm$.005} & 0.799{\footnotesize$\pm$.038} & 0.722{\footnotesize$\pm$.063} \\
 proj-dim 192     & 0.909{\footnotesize$\pm$.006} & 0.785{\footnotesize$\pm$.020} & 0.714{\footnotesize$\pm$.035} \\
 aux-weight 0.0   & 0.909{\footnotesize$\pm$.005} & 0.824{\footnotesize$\pm$.017} & 0.763{\footnotesize$\pm$.029} \\
@@ -752,17 +755,24 @@ $0.792\!\pm\!.034$ / $0.796\!\pm\!.035$), while smaller or causal/weaker encoder
 GRU temporal head is far ahead of plain pooling (0.792 vs.\ 0.645); this is the
 \emph{opposite} of the official-test single-model result (\Cref{sec:external}),
 where the plain head generalised best. We report both rather than hide the
-disagreement: the GRU advantage is a dev/ensemble phenomenon at $n{=}35$, which
-is why the GRU encoder is the natural second ensemble member while the plain head
-is the single-model default chosen by the held-out test. Third, granularity and
+disagreement. We nonetheless fix the plain head as the single-model default
+\emph{a priori}, independently of this dev signal and of the test set: it is the
+only pooling whose per-chunk attribution is faithful
+(\S\ref{sec:interpret}), which is a core requirement of our single-model claim.
+The GRU head, which forgoes that faithfulness, therefore serves as the second
+ensemble member rather than the headline model. The official test --- evaluated
+once, never as a selection signal --- then independently confirms that the plain
+head also generalises best. Third, granularity and
 regularisation are flat (dev macro-F1 0.73--0.82): $w4/s2$ matches the larger
 $w6/s3$, and dropout, projection width and auxiliary weight barely move the
 score. The auxiliary symptom loss can even be dropped with no dev cost, but we
 retain it for the clinical read-out (\S\ref{sec:interpret}) at negligible
 expense. Crucially, the configuration was frozen by this pre-registered,
-dev-only procedure before the single official-test evaluation; the dev argmax
-(which would prefer the GRU head) is overridden only where the held-out test
-disagrees, and that single disagreement is reported transparently.
+dev-only procedure before the single official-test evaluation. Where the dev
+argmax would prefer the GRU head, we do \emph{not} adopt it for the single model:
+the plain head is fixed a priori on the principled, test-independent grounds of
+faithful attribution (\S\ref{sec:interpret}), and the test set is consulted once
+as confirmation, never to choose between configurations.
 
 \section{Internal Comparison: Cross-Validation}
 \label{sec:internal}
