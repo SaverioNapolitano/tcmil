@@ -556,3 +556,5 @@ TSWLatexianTemp*
 # option is specified. Footnotes are the stored in a file with suffix Notes.bib.
 # Uncomment the next line to have this generated file ignored.
 #*Notes.bib
+# saved model weights (large, regenerable via src/training/train_tcmil_official.py)
+weights/
