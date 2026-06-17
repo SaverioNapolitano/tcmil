@@ -4,8 +4,10 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=results/ft/logs/job2_grid_%A_%a.out
+#SBATCH --exclude=patagarro    # broken node (job 50461: instant FAILED)
+#SBATCH --requeue              # auto-reschedule if a node dies
 ## adjust to your cluster:
 ##SBATCH --partition=gpu
 ##SBATCH --account=YOUR_ACCOUNT
@@ -18,6 +20,7 @@
 #   sbatch --dependency=afterok:$d cluster/ft_job2_grid.sh
 # If you skip DAPT, set --array=1-18%4 above.
 set -e
+export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p results/ft/logs
 bash cluster/run_ft_grid.sh "$SLURM_ARRAY_TASK_ID"

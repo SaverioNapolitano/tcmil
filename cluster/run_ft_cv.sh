@@ -7,6 +7,7 @@
 # single K-Fold per-run AUC 0.799 / macro-F1 0.706 (pos_weight=1.0).
 # Configs (EDIT after the grid): cluster/cv_configs.txt
 set -e
+export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
 cd "$(dirname "$0")/.."
 CONFIGS=cluster/cv_configs.txt
 LINES=$(grep -v '^#' "$CONFIGS" | grep -v '^$')

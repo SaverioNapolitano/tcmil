@@ -10,6 +10,7 @@
 #   python src/training/finetune_tcmil.py --smoke --output_dir results/ft/smoke \
 #       --ft_method lora            # install check, ~2 min
 set -e
+export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
 cd "$(dirname "$0")/.."
 
 CONFIGS=cluster/ft_grid_configs.txt
@@ -18,11 +19,19 @@ LINES=$(grep -v '^#' "$CONFIGS" | grep -v '^$')
 run_line() {
   name=$(echo "$1" | cut -d'|' -f1)
   flags=$(echo "$1" | cut -d'|' -f2)
+  out="results/ft/grid_$name"
+  # Resume: results.json is written only on completion, so skip configs that
+  # already finished. Resubmit the SAME array (with a higher --time) to rerun
+  # ONLY the tasks that the wall-time limit killed.
+  if [ -f "$out/results.json" ]; then
+    echo "=== [$(date +%H:%M:%S)] $name SKIP (already complete) ==="
+    return
+  fi
   echo "=== [$(date +%H:%M:%S)] $name ==="
   # shellcheck disable=SC2086
   uv run python src/training/finetune_tcmil.py \
     --protocol official --n_seeds 5 \
-    --output_dir "results/ft/grid_$name" $flags
+    --output_dir "$out" $flags
 }
 
 if [ -n "$1" ]; then

@@ -7,6 +7,7 @@ results_old/
 cache/
 .code-review-graph/
 IEEE*/
+checkpoints/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

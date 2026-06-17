@@ -101,15 +101,23 @@ All gates are on the **single model** (per-seed mean ± std), not ensembles.
    stop before reading any other number.
 2. **Forgetting flag**: any config with per-seed dev AUC mean < 0.80 is dead
    (catastrophic forgetting); exclude.
-3. **Stage-1 winner(s)**: top-2 configs by 5-seed **per-seed dev AUC mean**;
-   ties broken by lower std. Adoption requires the FT dev AUC to clear the
-   frozen control from the **same run** by more than its seed noise
-   (≈ +0.015). Below that → "frozen ceiling stands", stop after stage 1.
+3. **Stage-1 finalists** (DEV only, fixed before any test eval): select every
+   config whose 5-seed **per-seed dev AUC mean** is within one seed-noise band
+   (≈ 0.015) of the best, **capped at 4** (ties broken by lower std); minimum 1.
+   This replaces a fixed top-2 — take fewer when one config dominates, more when
+   several are genuinely tied. `summarize_finetune.py` prints this selection
+   mechanically. Adoption still requires the chosen config's FT dev AUC to clear
+   the frozen control from the **same run** by more than its seed noise
+   (≈ +0.015); none clears → "frozen ceiling stands", stop after stage 1.
 4. **Stage 2**: per finalist, 30-seed official, ONE test evaluation, a-priori
    prevalence threshold. Headline metric = **per-seed test macro-F1 / AUC**.
    Compare against the frozen single-model bar: **AUC 0.864 / macro-F1 0.774**
    (and the targets: Milintsevich 0.739, MDSD-FGPL 0.874). Win = FT single
-   significantly > frozen single on macro-F1 (one-sample t over seeds).
+   significantly > frozen single on macro-F1 (one-sample t over seeds). **With
+   more than one finalist, Holm-correct the FT-vs-frozen p-values across
+   finalists** — each extra finalist is another look at the n=47 test set, and
+   the cap of 4 bounds that multiplicity. Report all finalists; the headline is
+   the best by the pre-registered DEV rank, significant only if it survives Holm.
 5. **Stage 3**: winner vs frozen control on K-Fold (repeats × 5 folds) and MC,
    testprev thresholds, **per-run** (single-model) metrics. Improvement claim
    requires FT single-model AUC/macro-F1 to clear the same-script frozen

@@ -6,6 +6,8 @@
 #SBATCH --mem=48G
 #SBATCH --time=18:00:00
 #SBATCH --output=results/ft/logs/job4_cv_%A_%a.out
+#SBATCH --exclude=patagarro    # broken node (job 50461: instant FAILED)
+#SBATCH --requeue              # auto-reschedule if a node dies
 ## adjust to your cluster:
 ##SBATCH --partition=gpu
 ##SBATCH --account=YOUR_ACCOUNT
@@ -15,6 +17,7 @@
 # lines (default 2). Each task = one config (kfold + kfold_r2 + mc). Independent
 # of JOB 3 -> JOB 3 and JOB 4 can run at the same time (mind the 4-job cap).
 set -e
+export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p results/ft/logs
 bash cluster/run_ft_cv.sh "$SLURM_ARRAY_TASK_ID"

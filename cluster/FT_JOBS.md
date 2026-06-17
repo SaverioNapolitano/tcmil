@@ -16,7 +16,7 @@ lines in each `.sh` to your cluster.
 
 Configs (one `name|flags` per line):
 - job 2 → `cluster/ft_grid_configs.txt` (ready; 20 lines)
-- job 3 → `cluster/finalists_configs.txt` (**edit after job 2**: top-2 grid configs by 5-seed dev-ensemble AUC + frozen)
+- job 3 → `cluster/finalists_configs.txt` (**edit after job 2**: configs within a dev seed-noise band of the best 5-seed dev AUC, capped at 4, + frozen — `summarize_finetune.py` prints the selection; set the job-3 array to #finalists+1)
 - job 4 → `cluster/cv_configs.txt` (**edit after job 2**: the single winner + frozen)
 
 ## Run order (copy-paste)
@@ -46,6 +46,15 @@ summarize, edit configs → `sbatch job3` and `sbatch job4`.
   If you submit both at once and want to stay well under the cap, change their
   `%4` to `%2`.
 - Within a job, the array runs ≤4 tasks at a time automatically.
+
+## Resuming job 2 after a wall-time kill
+`--time` in `ft_job2_grid.sh` is **per array task**, not for the whole array.
+If some configs get killed for exceeding it, `run_ft_grid.sh` skips any config
+whose `results/ft/grid_<name>/results.json` already exists (written only on
+completion). So to rerun **only the incomplete ones**: raise `--time`, then
+resubmit the **same** `ft_job2_grid.sh` — finished tasks skip instantly, only
+the killed ones re-run. (A killed task leaves a partial dir with no
+`results.json`, so it re-runs from scratch.)
 
 ## After the runs
 `python training/summarize_finetune.py` aggregates `results/ft/*`. Apply the

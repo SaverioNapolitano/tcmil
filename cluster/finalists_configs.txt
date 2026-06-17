@@ -1,8 +1,11 @@
 # Stage-2 finalists — EDIT AFTER JOB 2 (grid).
-# Decision rule (README_FINETUNE.md): top-2 grid configs by 5-seed dev-ensemble
-# AUC + the frozen control. One per line: name|flags. Each line runs export_oof
-# (leakage-free OOF threshold) THEN official 30-seed test with that threshold.
-# Replace the winner flags with the actual stage-1 winners before submitting.
+# Decision rule (README_FINETUNE.md): every config within one dev seed-noise
+# band (≈0.015) of the best 5-seed per-seed dev AUC, CAPPED AT 4, + the frozen
+# control. `summarize_finetune.py` prints this selection. One per line:
+# name|flags. Each line runs export_oof (leakage-free OOF threshold) THEN
+# official 30-seed test with that threshold. Set the job-3 array to
+# (#finalists + 1). With >1 finalist, Holm-correct the FT-vs-frozen p-values.
+# Replace the winner flags with the actual stage-1 selection before submitting.
 winner1|--ft_method lora --lora_r 16 --encoder_lr 1e-4
 winner2|--ft_method last_k --unfreeze_last_k 2 --encoder_lr 1e-5
 frozen_ctrl|--ft_method frozen

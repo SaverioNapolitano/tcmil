@@ -7,6 +7,7 @@
 #   b) official   : 30 seeds, dev early stop, test ONCE with the OOF threshold
 # Configs (EDIT after the grid): cluster/finalists_configs.txt
 set -e
+export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
 cd "$(dirname "$0")/.."
 CONFIGS=cluster/finalists_configs.txt
 LINES=$(grep -v '^#' "$CONFIGS" | grep -v '^$')
