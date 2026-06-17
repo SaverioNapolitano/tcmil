@@ -105,7 +105,7 @@ All gates are on the **single model** (per-seed mean ± std), not ensembles.
    ties broken by lower std. Adoption requires the FT dev AUC to clear the
    frozen control from the **same run** by more than its seed noise
    (≈ +0.015). Below that → "frozen ceiling stands", stop after stage 1.
-4. **Stage 2**: per finalist, 10-seed official, ONE test evaluation, a-priori
+4. **Stage 2**: per finalist, 30-seed official, ONE test evaluation, a-priori
    prevalence threshold. Headline metric = **per-seed test macro-F1 / AUC**.
    Compare against the frozen single-model bar: **AUC 0.864 / macro-F1 0.774**
    (and the targets: Milintsevich 0.739, MDSD-FGPL 0.874). Win = FT single

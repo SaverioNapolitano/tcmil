@@ -217,7 +217,7 @@ python src/statistics/summarize_finetune.py --root results/ft
 # >>> edit cluster/finalists_configs.txt + cluster/cv_configs.txt with the
 #     grid winners (top-2 by 5-seed dev AUC + frozen control) <<<
 
-# Stage 2 — finalists (OOF threshold + 10-seed official test)
+# Stage 2 — finalists (OOF threshold + 30-seed official test)
 sbatch cluster/ft_job3_finalists.sh            # or: bash cluster/run_ft_finalists.sh
 # Stage 3 — CV for the winner vs frozen control
 sbatch cluster/ft_job4_cv.sh                   # or: bash cluster/run_ft_cv.sh

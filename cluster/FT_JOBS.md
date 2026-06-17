@@ -11,7 +11,7 @@ lines in each `.sh` to your cluster.
 |---|------|------|-------|-------|-------------|
 | 1 | `ft_job1_dapt.sh` | DAPT MLM pretrain → `checkpoints/dapt_bge_large` | — | — | no (optional) |
 | 2 | `ft_job2_grid.sh` | Stage-1 grid, 20 configs, dev-only 5-seed | `1-20%4` | job 1 (for DAPT lines 19-20) | no |
-| 3 | `ft_job3_finalists.sh` | Stage-2: OOF threshold + 10-seed official **test** | `1-3%4` | job 2 + edit configs | **yes** |
+| 3 | `ft_job3_finalists.sh` | Stage-2: OOF threshold + 30-seed official **test** | `1-3%4` | job 2 + edit configs | **yes** |
 | 4 | `ft_job4_cv.sh` | Stage-3: K-Fold(+repeat)+MC, winner vs frozen | `1-2%4` | job 2 + edit configs | **yes** |
 
 Configs (one `name|flags` per line):
