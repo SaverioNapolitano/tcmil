@@ -111,9 +111,10 @@ class FTTCMIL(nn.Module):
                 raise RuntimeError(
                     f"No known attention modules found for LoRA in {args.encoder_name}; "
                     "inspect named_modules() and extend the target list.")
+            alpha = args.lora_alpha if args.lora_alpha > 0 else 2 * args.lora_r
             cfg = LoraConfig(
-                r=args.lora_r, lora_alpha=2 * args.lora_r,
-                lora_dropout=0.1, bias="none", target_modules=targets,
+                r=args.lora_r, lora_alpha=alpha,
+                lora_dropout=args.lora_dropout, bias="none", target_modules=targets,
             )
             self.encoder = get_peft_model(self.encoder, cfg)
             return
@@ -555,6 +556,9 @@ def main():
     p.add_argument("--ft_method", default="lora",
                    choices=["frozen", "bitfit", "lora", "last_k", "full"])
     p.add_argument("--lora_r", type=int, default=16)
+    p.add_argument("--lora_alpha", type=int, default=-1,
+                   help="LoRA alpha; -1 (default) uses 2*lora_r.")
+    p.add_argument("--lora_dropout", type=float, default=0.1)
     p.add_argument("--lora_targets", default="attn", choices=["attn", "attn_ffn"])
     p.add_argument("--unfreeze_last_k", type=int, default=2)
     p.add_argument("--llrd", type=float, default=0.8)

@@ -87,8 +87,16 @@ def select_finalists(official, band=0.015, cap=4):
     cands.sort(key=lambda r: -r["_dev_seed_mean"])
     best = cands[0]["_dev_seed_mean"]
     band_sel = [r for r in cands if best - r["_dev_seed_mean"] <= band][:cap]
-    frozen = next((r for r in official if r["method"] == "frozen"
-                   and r.get("_dev_seed_mean") is not None), None)
+    # The no-adaptation control is the base-encoder frozen run (grid_frozen_ctrl),
+    # NOT the DAPT or alt-encoder (mxbai) frozen arms — both also have
+    # ft_method=="frozen". Pick it by name; fall back to the best-AUC frozen run
+    # (DAPT collapsed, so it can never be the max) so a rename can't grab dapt.
+    frozen_cands = [r for r in official if r["method"] == "frozen"
+                    and r.get("_dev_seed_mean") is not None]
+    frozen = next((r for r in frozen_cands
+                   if "dapt" not in r["run"] and "mxbai" not in r["run"]), None) \
+        or (max(frozen_cands, key=lambda r: r["_dev_seed_mean"])
+            if frozen_cands else None)
     fz = frozen["_dev_seed_mean"] if frozen else None
 
     out = ["\n## Pre-registered finalists (dev seed-AUC band ±%.3f, cap %d)\n"

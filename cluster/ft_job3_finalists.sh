@@ -1,13 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=tcmil-ft3-finalists
-#SBATCH --array=1-3%4
+#SBATCH --array=1-5%4
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=24:00:00
 #SBATCH --output=results/ft/logs/job3_finalists_%A_%a.out
-#SBATCH --exclude=patagarro    # broken node (job 50461: instant FAILED)
 #SBATCH --requeue              # auto-reschedule if a node dies
+## node patagarro was broken (job 50461). --exclude is rejected here; to avoid a
+## specific node use --constraint=<feature> (run: sinfo -o "%n %f") or file an HPC ticket.
 ## adjust to your cluster:
 ##SBATCH --partition=gpu
 ##SBATCH --account=YOUR_ACCOUNT
