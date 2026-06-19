@@ -166,7 +166,7 @@ interviewer-prompt bias probes (\Cref{sec:interpret}).
 The single model is our primary contribution and the fair comparison to the
 single-model text-only literature; we additionally report a two-encoder
 ensemble (\Cref{sec:ensemble}) as the matched counterpart to the two-branch
-fusion baselines. Encoder fine-tuning remains out of scope.
+fusion baselines.
 
 \section{Related Work and Baseline Selection}
 \label{sec:related}
@@ -177,9 +177,9 @@ non-standard split, on a different modality, or with the interviewer-prompt
 shortcut left uncontrolled. We therefore treat baseline selection as a
 verification problem and admit a competitor only if its number is on the
 held-out test set, text-only, and outside the interviewer-prompt-inflated
-regime identified by Burdisso et al.\ \cite{burdisso2024}.
+regime identified by \cite{burdisso2024}.
 
-\textbf{The validity filter.} Burdisso et al.\ \cite{burdisso2024} demonstrate
+\textbf{The validity filter.} \cite{burdisso2024} demonstrate
 that including the interviewer's (``Ellie'') prompts inflates DAIC-WOZ scores
 through a positional shortcut: a model reading only the second half of the
 interview, where explicit mental-health questions are asked, scores far higher.
@@ -198,10 +198,9 @@ in-paper validity check --- perturbing the participants' yes/no answers caused
 no micro-F1 drop and only a 0.52\% macro-F1 drop, and saliency attends symptom
 turns rather than the diagnosis question --- and (c) its macro-F1 of 0.739
 sits well inside the clean regime. It reports both micro-F1 (0.766) and
-macro-F1 (0.739); we match both, and additionally derive its positive-class
-F1 ($\approx$0.658) from its accuracy, macro-F1 and the 14/33 positive split.
+macro-F1 (0.739); we match both.
 
-\textbf{Other test-set numbers.} Of sixteen audited papers, only a few are both
+\textbf{Other test-set numbers.} To the best of our knowledge, only a few papers in the literature are both
 test-set and text-only. Beyond \cite{milintsevich2023} and the multi-view model
 \cite{agarwal2024} (macro-F1 0.80), these are HCAN
 \cite{mallolragolta2019} (positive-class F1 0.63), and two fusion systems:
@@ -304,8 +303,7 @@ Each chunk is embedded with a frozen sentence encoder
 (\texttt{bge-large-en-v1.5}, 335M parameters, 1024-dimensional mean-pooled
 output). Freezing the encoder is a deliberate choice given only 107 training
 subjects: it removes the dominant overfitting risk and makes the experiments
-cheap and reproducible. Encoder fine-tuning is a separate axis we leave to
-future work.
+cheap and reproducible.
 
 \subsection{Gated-attention pooling with a temporal context}
 A small projector reduces the chunk embeddings, an optional one-layer
@@ -341,7 +339,7 @@ We describe the protocol in detail, because the limited comparability of the
 existing literature is itself one of the observations that motivates this work.
 
 \textbf{Splits.} We use the official AVEC2017 split: 107 train, 35 dev, 47
-test subjects, subject-disjoint by construction (asserted in code). The encoder
+test subjects, subject-disjoint by construction. The encoder
 sees training text only; the dev set is used for early stopping and threshold
 estimation; the test set is evaluated \emph{once} per reported configuration.
 
@@ -350,9 +348,7 @@ accuracy/Youden tuning, which all collapse to a degenerate $t\!\approx\!0.15$
 with recall pinned at 1.0. We instead use an \emph{a-priori prevalence}
 threshold: choose $t$ so that the predicted positive rate matches the training
 prevalence ($\approx$0.28). This uses the model's scores and a training-derived
-prior but never a test label, so it is leakage-free, and it is distinct from
-the test-tuned oracle threshold (which we report only as a ceiling, never as a
-headline).
+prior but never a test label, so it is leakage-free.
 
 \textbf{Metrics.} We report ROC-AUC (threshold-free ranking), positive-class
 F1, macro-F1 (the literature's ``F1''), and micro-F1 (which equals accuracy
@@ -437,7 +433,7 @@ macro-F1 the two are statistically indistinguishable under seed variation, while
 interviewer-prompt bias control, or a subject-level interval. TC-MIL thus matches
 the best prior text-only single model on macro-F1 and additionally supplies a
 threshold-free AUC (0.864), micro-F1 (0.814), an explicit bias control
-(\S\ref{sec:interpret}), a per-chunk faithfulness analysis, and 30-seed plus
+(\Cref{sec:interpret}), a per-chunk faithfulness analysis, and 30-seed plus
 bootstrap uncertainty. The subject-level bootstrap intervals for the
 headline operating point are wide (ROC-AUC $[0.751, 0.963]$, macro-F1
 $[0.591, 0.898]$ over 2000 resamples of the 47 test subjects, \Cref{tab:external});
@@ -652,10 +648,9 @@ to clear it: test-time MC-dropout averaging (lever 6, $T{=}30$) is flat (macro-F
 $w2{+}w4{+}w6$) nudges macro-F1 to 0.782 but at $2.4\times$ the seed variance and
 no AUC gain. This is exactly what the oracle ceiling predicts --- with the
 encoder frozen the probabilities have no robust headroom, and improving the
-\emph{ranking} would require fine-tuning the encoder. The
+\emph{ranking} requires fine-tuning the encoder. The
 final recipe is therefore the base model with $pos\_weight=1.0$; the remaining
-axis that could raise the AUC ceiling is encoder fine-tuning, which we leave to
-future work.
+axis that could raise the AUC ceiling is encoder fine-tuning.
 
 \begin{figure}[t]
 \centering
@@ -686,7 +681,7 @@ chunking granularity and the regularisation.
 5 seeds, $pos\_weight=1.0$. Encoders use the GRU head at $w4/s2$; temporal heads
 use bge-large. (base) marks the configuration used elsewhere; \textbf{bold} marks
 the final single-model choice (note the plain head, fixed a priori for faithful
-linear attribution, \S\ref{sec:interpret}, not the dev argmax).
+linear attribution, \Cref{sec:interpret}, not the dev argmax).
 Most macro-F1 differences are within one std (the encoder choice is robust); the
 plain-vs-GRU gap is not.}
 \label{tab:abldesign-rep}
@@ -758,7 +753,7 @@ where the plain head generalised best. We report both rather than hide the
 disagreement. We nonetheless fix the plain head as the single-model default
 \emph{a priori}, independently of this dev signal and of the test set: it is the
 only pooling whose per-chunk attribution is faithful
-(\S\ref{sec:interpret}), which is a core requirement of our single-model claim.
+(\Cref{sec:interpret}), which is a core requirement of our single-model claim.
 The GRU head, which forgoes that faithfulness, therefore serves as the second
 ensemble member rather than the headline model. The official test --- evaluated
 once, never as a selection signal --- then independently confirms that the plain
@@ -766,12 +761,12 @@ head also generalises best. Third, granularity and
 regularisation are flat (dev macro-F1 0.73--0.82): $w4/s2$ matches the larger
 $w6/s3$, and dropout, projection width and auxiliary weight barely move the
 score. The auxiliary symptom loss can even be dropped with no dev cost, but we
-retain it for the clinical read-out (\S\ref{sec:interpret}) at negligible
+retain it for the clinical read-out (\Cref{sec:interpret}) at negligible
 expense. Crucially, the configuration was frozen by this pre-registered,
 dev-only procedure before the single official-test evaluation. Where the dev
 argmax would prefer the GRU head, we do \emph{not} adopt it for the single model:
 the plain head is fixed a priori on the principled, test-independent grounds of
-faithful attribution (\S\ref{sec:interpret}), and the test set is consulted once
+faithful attribution (\Cref{sec:interpret}), and the test set is consulted once
 as confirmation, never to choose between configurations.
 
 \section{Internal Comparison: Cross-Validation}
@@ -1018,8 +1013,8 @@ denotes $p<0.05$. Acc $\equiv$ micro-F1.}
 \end{tabular}
 \end{table}
 
-Against the external baseline, whose per-subject scores are not public, a
-one-sample $t$-test of the 30 per-seed macro-F1 values against the baseline's \cite{milintsevich2023}
+A
+one-sample $t$-test of the 30 per-seed macro-F1 values against the baseline's (whose per-subject scores are not public) \cite{milintsevich2023}
 0.739 gives $p=3.8\!\times\!10^{-7}$.
 
 For cross-validation the matched (fold, seed) metrics are \emph{paired}, so the
@@ -1238,7 +1233,7 @@ correlation) we give mean$\pm$std over interviews; the occlusion correlation
 is tested against 0 by a one-sample $t$-test ($^{**}$ $p<0.01$). The remaining
 rows are 5-seed aggregate point estimates without a per-unit distribution, so
 no test is attached. A positive position--attention correlation would indicate
-the Burdisso second-half shortcut.}
+the second-half shortcut discovered by \cite{burdisso2024}.}
 \label{tab:interp}
 \centering
 \small
@@ -1261,7 +1256,7 @@ Symptom AUC (8-item range) & .74--.94 & .75--.91 \\
 The strongest validity result is that the position--attention correlation is
 $\approx$0 ($+0.03$ dev, $+0.002$ test): attention is spread across the
 interview, not concentrated in the late mental-health-question region that
-Burdisso et al.\ identify as the shortcut. This is corroborated at the
+\cite{burdisso2024} identify as the shortcut. This is corroborated at the
 accuracy level: removing all interviewer lines (\texttt{participant-only})
 \emph{raises} dev-ensemble AUC to 0.902 from 0.895, so the signal does not
 depend on the therapist's prompts. TC-MIL is, to our knowledge, the only
@@ -1314,6 +1309,8 @@ peakier, more selectable attention; de-biasing improves the decision but
 slightly blurs the per-chunk attribution. We therefore report the F1
 improvement and the faithfulness behaviour as separate, independent findings.
 
+\input{sec_finetuning}
+
 \section{Discussion and Limitations}
 
 The results support a narrow but solid claim: under a fixed, leakage-free
@@ -1338,8 +1335,7 @@ reported. We therefore treat these systems as the frontier to be approached
 rather than as direct comparisons. Attention is not a faithful per-chunk
 explanation, a property we measure rather than assume. Finally, the two-encoder
 ensemble we report (\Cref{sec:ensemble}, macro-F1 0.833) narrows but does not
-close the gap to the two-branch fusion frontier; encoder fine-tuning, left out
-of scope here, is the natural next step toward it.
+close the gap to the two-branch fusion frontier.
 
 \section{Conclusion}
 
@@ -1355,9 +1351,7 @@ recall-biasing class weight; cross-validation corroborates the ranking
 internally; and a quantified interpretability study shows the model is stable,
 clinically grounded, and free of the interviewer-prompt shortcut, while being
 honest that its attention is not a faithful per-instance saliency. A matched
-two-encoder ensemble raises macro-F1 to 0.833; the remaining headroom toward the
-multi-branch fusion systems lies along the one axis we leave to future work:
-encoder fine-tuning. The source code and the trained network weights are
+two-encoder ensemble raises macro-F1 to 0.833. The source code and the trained network weights are
 available at \url{https://github.com/SaverioNapolitano/tcmil} to ensure
 reproducibility.
 
