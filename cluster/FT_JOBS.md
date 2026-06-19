@@ -47,14 +47,29 @@ summarize, edit configs → `sbatch job3` and `sbatch job4`.
   `%4` to `%2`.
 - Within a job, the array runs ≤4 tasks at a time automatically.
 
-## Resuming job 2 after a wall-time kill
-`--time` in `ft_job2_grid.sh` is **per array task**, not for the whole array.
-If some configs get killed for exceeding it, `run_ft_grid.sh` skips any config
-whose `results/ft/grid_<name>/results.json` already exists (written only on
-completion). So to rerun **only the incomplete ones**: raise `--time`, then
-resubmit the **same** `ft_job2_grid.sh` — finished tasks skip instantly, only
-the killed ones re-run. (A killed task leaves a partial dir with no
-`results.json`, so it re-runs from scratch.)
+## Resuming after a wall-time kill (all jobs)
+`--time` is **per array task**, not for the whole array. The 14h30 account cap
+means jobs 3 and 4 likely need >1 submit, so resume is two-level and **on by
+default** — just resubmit the **same** `.sh` and it continues near where it
+stopped:
+
+1. **Per protocol call** (the `uv run ...` lines in `run_ft_*.sh`): skipped if
+   its `results/ft/<dir>/results.json` already exists (written only on
+   completion). So a finished `export_oof`/`kfold`/`mc`/`official` call returns
+   instantly on resubmit.
+2. **Per seed / fold-seed** (inside one call): every finished training unit is
+   cached to `results/ft/<dir>/seed_cache/` (`seed_<n>.json` for `official`,
+   `fold<f>_seed<n>.json` for cv) the moment it completes — predictions +
+   metrics, written atomically so a kill mid-write can't corrupt it. On resubmit
+   those units load from cache (no retrain); only the missing ones run. CV
+   splits are seeded independently of which seeds ran, so this is exact.
+
+So for a killed job 3 / job 4: just `sbatch` the **same** script again (and
+again) until it finishes. The cache is keyed by the run config — if you change a
+hyperparam in the same output dir, stale units are detected and recomputed.
+Disable with `--no_resume`. Job 2 is identical at the per-config level
+(`run_ft_grid.sh` skips configs whose `results.json` exists; raise `--time` if
+needed, then resubmit).
 
 ## After the runs
 `python training/summarize_finetune.py` aggregates `results/ft/*`. Apply the

@@ -350,6 +350,59 @@ def free(model):
 
 
 # --------------------------------------------------------------------------
+# Per-unit resume cache
+# --------------------------------------------------------------------------
+# Each protocol is a loop over independent training units (one seed for
+# official; one fold x seed for cv). A wall-time kill mid-loop loses every
+# completed unit because results.json is written only at the end. To resume
+# "as close as possible to where it stopped", each unit's predictions+metrics
+# are cached the moment it finishes; on a resubmit the finished units load
+# from cache (no retrain) and only the missing ones run.
+
+# Construction + protocol hyperparams that define a unit. If any of these
+# change in the same output_dir, the cache is stale and is ignored.
+_CFG_KEYS = (
+    "protocol", "encoder_name", "ft_method", "lora_r", "lora_alpha",
+    "lora_dropout", "lora_targets", "unfreeze_last_k", "llrd", "encoder_lr",
+    "head_lr", "head_warmup_epochs", "warmup_ratio", "weight_decay",
+    "max_epochs", "patience", "accum", "micro_batch", "temporal",
+    "gru_layers", "pos_weight", "proj_dim", "attn_dim", "dropout",
+    "aux_weight", "window", "stride", "max_len", "n_seeds", "base_seed",
+    "seed", "n_folds", "n_splits", "test_size", "val_size", "threshold_mode",
+    "threshold_metric", "max_train_bags",
+)
+
+
+def _cfg_key(args):
+    return {k: getattr(args, k) for k in _CFG_KEYS}
+
+
+def _load_unit(cache_dir, name, cfg_key, log):
+    """Return a cached unit's data, or None if absent/corrupt/stale."""
+    f = cache_dir / f"{name}.json"
+    if not f.exists():
+        return None
+    try:
+        d = json.load(open(f))
+    except (json.JSONDecodeError, OSError):
+        log.warning(f"corrupt cache {f.name}; recomputing")
+        return None
+    if d.get("cfg_key") != cfg_key:
+        log.warning(f"stale cache {f.name} (config changed); recomputing")
+        return None
+    return d["data"]
+
+
+def _save_unit(cache_dir, name, cfg_key, data):
+    """Write a unit cache atomically (rename) so a kill mid-write can't leave
+    a half-written file that a later run would treat as valid."""
+    tmp = cache_dir / f"{name}.json.tmp"
+    with open(tmp, "w") as f:
+        json.dump({"cfg_key": cfg_key, "data": data}, f)
+    tmp.replace(cache_dir / f"{name}.json")
+
+
+# --------------------------------------------------------------------------
 # Protocols
 # --------------------------------------------------------------------------
 
@@ -372,10 +425,25 @@ def run_official(args, device, log, out_dir):
         ckpt_dir = out_dir / "checkpoints"
         ckpt_dir.mkdir(exist_ok=True)
         write_ckpt_config(ckpt_dir, args)
+    cfg_key = _cfg_key(args)
+    cache_dir = out_dir / "seed_cache"
+    if args.resume:
+        cache_dir.mkdir(exist_ok=True)
     dev_runs, test_runs, per_seed = [], [], []
     dev_labels = test_labels = None
     for i in range(args.n_seeds):
         seed = args.base_seed + i
+        cached = (_load_unit(cache_dir, f"seed_{seed}", cfg_key, log)
+                  if args.resume else None)
+        if cached is not None:
+            dev_runs.append(np.array(cached["dev_probs"]))
+            dev_labels = np.array(cached["dev_labels"])
+            per_seed.append(cached["metrics"])
+            if args.eval_test:
+                test_runs.append(np.array(cached["test_probs"]))
+                test_labels = np.array(cached["test_labels"])
+            log.info(f"seed {seed}: loaded from cache (AUC={cached['metrics']['roc_auc']:.4f})")
+            continue
         t0 = time.time()
         model, best_auc, amp, best_state = train_one_seed_ft(args, seed, train_ivs, dev_ivs, device, log)
         if ckpt_dir is not None:
@@ -387,9 +455,15 @@ def run_official(args, device, log, out_dir):
         m = compute_metrics(dev_labels, (dp >= 0.5).astype(int), dp)
         per_seed.append(m)
         log.info(f"seed {seed}: dev AUC={m['roc_auc']:.4f} ({time.time()-t0:.0f}s)")
+        unit = {"dev_probs": dp.tolist(),
+                "dev_labels": np.asarray(dev_labels).tolist(), "metrics": m}
         if args.eval_test:
             tp, test_labels = predict_bags(model, test_ivs, device, args.micro_batch, amp)
             test_runs.append(tp)
+            unit["test_probs"] = tp.tolist()
+            unit["test_labels"] = np.asarray(test_labels).tolist()
+        if args.resume:
+            _save_unit(cache_dir, f"seed_{seed}", cfg_key, unit)
         free(model)
 
     dev_avg = np.mean(dev_runs, axis=0)
@@ -449,6 +523,10 @@ def run_cv(args, device, log, out_dir):
         ckpt_dir = out_dir / "checkpoints"
         ckpt_dir.mkdir(exist_ok=True)
         write_ckpt_config(ckpt_dir, args)
+    cfg_key = _cfg_key(args)
+    cache_dir = out_dir / "seed_cache"
+    if args.resume:
+        cache_dir.mkdir(exist_ok=True)
 
     raw, group_preds = [], {}
     oof_prob, oof_label = {}, {}
@@ -477,6 +555,19 @@ def run_cv(args, device, log, out_dir):
         group_preds[fold_idx] = []
         for s in range(args.n_seeds):
             run_seed = args.seed + fold_idx * 100 + s
+            cached = (_load_unit(cache_dir, f"fold{fold_idx}_seed{run_seed}", cfg_key, log)
+                      if args.resume else None)
+            if cached is not None:
+                m = cached["metrics"]
+                raw.append(m)
+                group_preds[fold_idx].append({
+                    "probability": np.array(m["probability"]),
+                    "true_label": np.array(m["true_label"]),
+                    "val_probability": np.array(m["val_probability"]),
+                    "val_true_label": np.array(m["val_true_label"])})
+                log.info(f"  run seed={run_seed}: loaded from cache "
+                         f"(AUC={m['roc_auc']:.4f} F1={m['f1']:.4f})")
+                continue
             model, _, amp, best_state = train_one_seed_ft(args, run_seed, inner_train,
                                                           inner_val, device, log)
             if ckpt_dir is not None:
@@ -500,6 +591,8 @@ def run_cv(args, device, log, out_dir):
             group_preds[fold_idx].append({
                 "probability": te_probs, "true_label": te_labels,
                 "val_probability": va_probs, "val_true_label": va_labels})
+            if args.resume:
+                _save_unit(cache_dir, f"fold{fold_idx}_seed{run_seed}", cfg_key, {"metrics": m})
             log.info(f"  run seed={run_seed}: AUC={m['roc_auc']:.4f} F1={m['f1']:.4f}")
 
         if args.protocol == "export_oof":
@@ -608,6 +701,11 @@ def main():
                    help="Save per-seed trainable weights (default on; "
                         "reproducibility / offline ensembling).")
     p.add_argument("--no_save_weights", dest="save_weights", action="store_false")
+    p.add_argument("--resume", action="store_true", default=True,
+                   help="Cache each finished seed/fold-seed and skip it on a "
+                        "resubmit (default on; lets a wall-time-killed run "
+                        "continue near where it stopped).")
+    p.add_argument("--no_resume", dest="resume", action="store_false")
     p.add_argument("--smoke", action="store_true",
                    help="2 epochs, 12 train bags, 1 seed — install check only")
     p.add_argument("--max_train_bags", type=int, default=0)

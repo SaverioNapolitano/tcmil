@@ -7,8 +7,6 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=results/ft/logs/job2_grid_%A_%a.out
 #SBATCH --requeue              # auto-reschedule if a node dies
-## node patagarro was broken (job 50461). --exclude is rejected here; to avoid a
-## specific node use --constraint=<feature> (run: sinfo -o "%n %f") or file an HPC ticket.
 ## adjust to your cluster:
 ##SBATCH --partition=gpu
 ##SBATCH --account=YOUR_ACCOUNT

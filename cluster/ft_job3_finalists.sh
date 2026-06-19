@@ -4,11 +4,9 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=24:00:00
+#SBATCH --time=14:30:00         # under the 14h30 account cap; resubmit to resume
 #SBATCH --output=results/ft/logs/job3_finalists_%A_%a.out
 #SBATCH --requeue              # auto-reschedule if a node dies
-## node patagarro was broken (job 50461). --exclude is rejected here; to avoid a
-## specific node use --constraint=<feature> (run: sinfo -o "%n %f") or file an HPC ticket.
 ## adjust to your cluster:
 ##SBATCH --partition=gpu
 ##SBATCH --account=YOUR_ACCOUNT
