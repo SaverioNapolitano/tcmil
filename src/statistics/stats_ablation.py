@@ -35,7 +35,7 @@ TCMIL = {
     "official": "results/single_model/headline_pw1_30seed/results.json",
 }
 LEGACY = ["dialogue_mean", "flat_mil_mean", "flat_mil_attn", "damil_r",
-          "ss_damil_r_v9", "ss_damil_r_v25", "ss_damil_r_v26", "ss_damil_r_v29"]
+          "ss_damil_r_mh", "ss_damil_r_gsi", "ss_damil_r_conv"]
 
 
 from src.training.train_tcmil_official import tune_threshold

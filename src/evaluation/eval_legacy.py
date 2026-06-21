@@ -16,8 +16,8 @@ Architecture ladder (the ablation axes vs TC-MIL):
                       source survives only as a py3.11 .pyc)
     flat_mil_attn   - utterance MIL, gated-attention pooling (reimplemented)
     damil_r         - role-aware dual attention MIL (models/damil_r.py)
-    ss_damil_r_v9   - + symptom supervision, multi-head pooling
-                      (models/ss_damil_r.py, the v9d-official architecture)
+    ss_damil_r_mh   - + symptom supervision, multi-head pooling
+                      (models/ss_damil_r.py, SSDamilRMH; the legacy ceiling)
 
 Not ported (documented in the ablation study): damil_h (source not
 recoverable), damil_x (requires the linguistic-feature pipeline),
@@ -45,10 +45,9 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from src.core.dataset import load_interviews_with_roles
 from src.core.models.damil_r import DAMILRClassifier
 from src.core.models.ss_damil_r import (
-    SSDamilRClassifierV9,
-    SSDamilRClassifierV25,
-    SSDamilRClassifierV26,
-    SSDamilRClassifierV29,
+    SSDamilRMH,
+    SSDamilRGSI,
+    SSDamilRConv,
 )
 from src.training.train_tcmil_official import tune_threshold
 from src.core.utils.evaluation import _seed_ensemble_metrics
@@ -135,7 +134,7 @@ def _fwd_damil_r(model, iv, train):
 
 
 def _fwd_ss(model, iv, train):
-    """Symptom-supervised SS-DAMIL-R family (V9/V25/V29): dict output with
+    """Symptom-supervised SS-DAMIL-R family (MH/GSI): dict output with
     'logit' + 'symptom_logits', optional 'diversity_loss'."""
     out = model(iv["patient_embeddings"], iv["interviewer_embeddings"],
                 noise_std=0.01 if train else 0.0)
@@ -152,7 +151,7 @@ def _fwd_ss(model, iv, train):
 
 
 def _fwd_ss_backbone(model, iv, train):
-    """V29-style: forward_backbone -> forward_heads (no unified forward)."""
+    """Conv-style: forward_backbone -> forward_heads (no unified forward)."""
     pooled, div = model.forward_backbone(
         iv["patient_embeddings"], iv["interviewer_embeddings"],
         noise_std=0.01 if train else 0.0)
@@ -175,18 +174,15 @@ REGISTRY = {
     "flat_mil_attn": (lambda: FlatMILAttn(), _fwd_simple),
     "damil_r": (lambda: DAMILRClassifier(embedding_dim=768, proj_dim=64,
                                          att_hidden_dim=32), _fwd_damil_r),
-    "ss_damil_r_v9": (lambda: SSDamilRClassifierV9(embedding_dim=768,
-                                                   proj_dim=64), _fwd_ss),
-    # Distinct SS-DAMIL-R architectures (top non-V9 performers on the old
-    # pooled-189 board): V25 gated symptom injection, V29 1D-conv front-end.
-    "ss_damil_r_v25": (lambda: SSDamilRClassifierV25(embedding_dim=768,
-                                                     proj_dim=64), _fwd_ss),
-    # V26 ships a broken unified forward (unpacks 3, backbone yields 2);
-    # drive it through the backbone like V29.
-    "ss_damil_r_v26": (lambda: SSDamilRClassifierV26(embedding_dim=768,
-                                                     proj_dim=64), _fwd_ss_backbone),
-    "ss_damil_r_v29": (lambda: SSDamilRClassifierV29(embedding_dim=768,
-                                                     proj_dim=64), _fwd_ss_backbone),
+    "ss_damil_r_mh": (lambda: SSDamilRMH(embedding_dim=768,
+                                         proj_dim=64), _fwd_ss),
+    # Distinct SS-DAMIL-R architectures (top non-MH performers on the old
+    # pooled-189 board): GSI gated symptom injection with attention dropout,
+    # Conv 1D-conv front-end.
+    "ss_damil_r_gsi": (lambda: SSDamilRGSI(embedding_dim=768,
+                                           proj_dim=64), _fwd_ss),
+    "ss_damil_r_conv": (lambda: SSDamilRConv(embedding_dim=768,
+                                             proj_dim=64), _fwd_ss_backbone),
 }
 
 
