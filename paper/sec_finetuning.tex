@@ -156,42 +156,57 @@ than the $n\!=\!35$ development split, and it is informative on its own.
 
 \begin{table}[t]
 \caption{Stage-2 OOF probe (leakage-free, train+dev pool $N\!=\!142$, 42
-positive). \textbf{OOF AUC} with a subject-resampling bootstrap 95\% CI; the
-development per-seed AUC and the resulting ranks are repeated for contrast.
-Paired-bootstrap $\Delta$AUC against the OOF-best (\texttt{last-}4) is
-$+0.015$/$+0.021$/$+0.026$, every 95\% CI spanning $0$ ($p=0.29$/$0.30$/$0.22$):
-no pairwise difference is significant.}
+positive), \emph{now including the frozen control}. \textbf{OOF AUC} with a
+subject-resampling bootstrap 95\% CI; the development per-seed AUC and the
+resulting ranks are repeated for contrast. The frozen control is the pooled-OOF
+best. Wilcoxon signed-rank on the 15 paired per-run ($5$ fold $\times\,3$ seed)
+AUCs finds \emph{no} fine-tuning finalist different from frozen (smallest raw
+$p=0.39$; all Holm-corrected $p\!\approx\!1$): no adaptation lift survives the
+leakage-free probe.}
 \label{tab:ft-oof}
 \centering\small
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lccccc@{}}
 \toprule
-\textbf{Finalist} & \textbf{OOF AUC} & \textbf{95\% CI} & \textbf{dev AUC} &
+\textbf{Model} & \textbf{OOF AUC} & \textbf{95\% CI} & \textbf{dev AUC} &
 \textbf{dev rk} & \textbf{OOF rk} \\
 \midrule
-\textbf{last-4, lr1e-5}        & \textbf{0.789} & [.706,.862] & 0.908 & 4 & \textbf{1} \\
-LoRA $r$16+FFN, lr1e-4         & 0.775 & [.687,.851] & 0.915 & 2 & 2 \\
-mxbai LoRA $r$16, lr1e-4       & 0.768 & [.685,.843] & 0.916 & \textbf{1} & 3 \\
-LoRA $r$8, lr2e-4              & 0.764 & [.676,.846] & 0.913 & 3 & 4 \\
+\textbf{frozen (control)}      & \textbf{0.790} & [.709,.866] & 0.892 & 5 & \textbf{1} \\
+last-4, lr1e-5                 & 0.789 & [.706,.862] & 0.908 & 4 & 2 \\
+LoRA $r$16+FFN, lr1e-4         & 0.775 & [.687,.851] & 0.915 & 2 & 3 \\
+mxbai LoRA $r$16, lr1e-4       & 0.768 & [.685,.843] & 0.916 & \textbf{1} & 4 \\
+LoRA $r$8, lr2e-4              & 0.764 & [.676,.846] & 0.913 & 3 & 5 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Two points follow, both consistent with the development-grid reading.
+Three points follow, all consistent with the development-grid reading.
 \textbf{(1) The grid ranking does not survive the leakage-free probe.} The
-development rank-1 configuration (\texttt{mxbai} LoRA $r$16) falls to OOF rank~3,
-while \texttt{last-}4 --- development rank~4 --- is OOF rank~1; yet every
-pairwise OOF AUC gap lies within bootstrap noise, so the four finalists are
+development rank-1 configuration (\texttt{mxbai} LoRA $r$16) falls to OOF rank~4,
+while \texttt{last-}4 --- development rank~4 --- rises to OOF rank~2; yet every
+pairwise OOF AUC gap lies within bootstrap noise, so the finalists are
 \emph{statistically indistinguishable} at $N\!=\!142$. This is the same
 conclusion the per-seed grid reached --- no single adaptation method is crowned
 by iteration~1 --- now corroborated on a leakage-free, larger sample, and it is
 exactly why selection was pre-registered and the test split is spent once.
 \textbf{(2) The development AUC is optimistic.} The leakage-free OOF AUC
 ($\approx\!0.76$--$0.79$) sits about $0.13$ below the development figure
-($\approx\!0.91$); test expectations should be calibrated to the OOF band. We do
-not yet compare against the frozen control here: its OOF/test arm belongs to the
-same pending evaluation and is not used to claim an adaptation lift until it
-lands.
+($\approx\!0.91$); test expectations should be calibrated to the OOF band.
+\textbf{(3) Fine-tuning yields no leakage-free OOF lift over the frozen
+control.} Run through the identical OOF probe, the frozen encoder scores the
+\emph{highest} pooled OOF AUC of the set ($0.790$, $95\%$ CI $[.709,.866]$),
+edging the best adaptation arm (\texttt{last-}4, $0.789$). Treating the 15 paired
+per-run AUCs ($5$ fold $\times\,3$ seed, aligned by fold and seed) with a
+Wilcoxon signed-rank test, no fine-tuning finalist differs from frozen: the
+mean per-run gaps are within $\pm0.01$ AUC and the raw $p$-values are
+$0.98$/$0.39$/$0.60$/$0.69$ (\texttt{last-}4/LoRA $r$16+FFN/\texttt{mxbai}/LoRA
+$r$8), all $\approx\!1$ after Holm correction. Every model separates the pooled
+pool far above chance (Mann-Whitney $p<10^{-6}$), but adaptation moves the
+\emph{ranking} no further than frozen does. The grid's apparent $\approx\!+0.02$
+development-AUC lift over the frozen control is therefore a small-$n$ artefact of
+the $n\!=\!35$ dev split; it does not reproduce on the four-fold-larger,
+leakage-free OOF read. This is exactly the kind of optimism the staged protocol
+was built to catch before spending the test split.
 
 \subsection{Iteration 1: official-test and cross-validation results}
 \label{sec:finetune-iter1-test}
@@ -233,16 +248,3 @@ survives cross-validation, is the decisive question; the frozen single-model bar
 to beat is macro-F1 $0.774$ / AUC $0.864$ on the official split and AUC $0.799$ /
 macro-F1 $0.706$ under $K$-fold. Because the top methods are tied on development,
 the test split also arbitrates \emph{which} adaptation method to recommend.
-
-\subsection{Outlook: iteration 2}
-\label{sec:finetune-iter2}
-The iteration-1 grid was deliberately broad and returned a flat top cluster, so
-iteration 2 narrows rather than widens. It drops the settled negatives (DAPT and
-the sub-band families) and refines around the leaders: the $r$8/$r$16 $\times$
-lr$\{1,2\}{\times}10^{-4}$ region is re-run at 10 seeds to resolve the sub-$0.01$
-per-seed AUC gaps that 5 seeds cannot, alongside a small probe of head
-regularisation (dropout, auxiliary-loss weight) and the two LoRA-internal knobs
-the first grid left fixed ($\alpha$ and adapter dropout). This iteration is
-prepared but not yet run; its results will refine, not overturn, the conclusion
-established here --- that lightweight adaptation gives a modest AUC lift while
-DAPT fails.
