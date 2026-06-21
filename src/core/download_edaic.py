@@ -14,9 +14,12 @@ DAIC-WOZ schema, and writes it to ``{out_dir}/raw/{ID}_TRANSCRIPT.csv`` so the
 existing preprocessing/inference code runs unchanged for the zero-shot
 generalization experiment (TCMIL trained on DAIC-WOZ, tested on E-DAIC).
 
-Labels are NOT downloaded: ``data/e-daic/labels2019.tar.gz`` already bundles the
-official AVEC 2019 / E-DAIC label splits (train/dev/test + Detailed_PHQ8). This
-script extracts them into ``{out_dir}/labels/`` if not already present.
+Labels are NOT downloaded and are NOT shipped with the repo: place the official
+AVEC 2019 / E-DAIC label splits (``train_split.csv``, ``dev_split.csv``,
+``test_split.csv``, ``Detailed_PHQ8_Labels.csv``) in ``data/e-daic/labels/`` by
+hand first (see README "Get the data"). As a convenience, if you instead drop the
+official ``labels2019.tar.gz`` in ``data/e-daic/``, this script extracts the
+splits from it.
 
 Participant IDs are read from those label split CSVs, so only patients with a
 known PHQ-8 label are fetched. The run is resumable: transcripts already on disk
@@ -73,10 +76,11 @@ _VALUE_KEYS = ("value", "text", "utterance", "transcript")
 # ---------------------------------------------------------------------------
 
 def ensure_labels(out_dir: Path) -> Path:
-    """Extract the bundled AVEC 2019 label splits into ``{out_dir}/labels/``.
+    """Ensure the AVEC 2019 label splits are in ``{out_dir}/labels/``.
 
-    Returns the labels directory. Uses the existing ``labels2019.tar.gz`` rather
-    than downloading anything — those labels are the official E-DAIC labels.
+    Returns the labels directory. If the split CSVs are already there (placed by
+    hand, see README), uses them as-is. Otherwise, as a fallback, extracts them
+    from a manually-supplied ``labels2019.tar.gz`` — nothing is downloaded.
     """
     labels_dir = out_dir / "labels"
     labels_dir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +91,10 @@ def ensure_labels(out_dir: Path) -> Path:
     tarball = out_dir / LABELS_TARBALL
     if not tarball.exists():
         raise FileNotFoundError(
-            f"Missing {tarball}. Expected the bundled AVEC 2019 labels."
+            f"No E-DAIC labels in {labels_dir} and no {tarball}. The labels are "
+            "not shipped — place the split CSVs by hand (see README \"Get the "
+            "data\") or drop the official labels2019.tar.gz in "
+            f"{out_dir}."
         )
 
     with tarfile.open(tarball, "r:gz") as tar:

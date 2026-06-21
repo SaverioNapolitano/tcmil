@@ -5,10 +5,6 @@ interview is a **bag of dialogue chunks** (sliding windows of
 interviewer→participant exchanges) classified by a small gated-attention MIL head
 over a **frozen sentence encoder**.
 
-This README is a **practical guide**: what to install, what to run, in what
-order, and what to expect. The method, results, ablations, and statistics live in
-the paper (`paper/paper.pdf`).
-
 ---
 
 ## 1. Requirements
@@ -27,7 +23,7 @@ All Python deps (torch, transformers, peft, scikit-learn, …) are pinned in
 ## 2. Setup
 
 ```bash
-git clone <repo> && cd DAMIL-2
+git clone <repo> && cd tcmil
 uv sync                      # creates .venv/ and installs everything
 ```
 
@@ -35,9 +31,6 @@ Run commands either with `uv run python …` or by activating the venv
 (`source .venv/bin/activate`, then `python …`). Examples below use `uv run`.
 All commands run **from the repo root** (imports resolve `src.*` via the repo
 root on `sys.path`).
-
-> **Note (macOS / iCloud):** keep the repo and its `.venv` outside an
-> iCloud-synced folder — sync corrupts the virtualenv.
 
 ---
 
@@ -49,13 +42,30 @@ the base URL for the participant archives.
 
 > **Request access:** `<ACCESS_REQUEST_LINK_PLACEHOLDER>`
 
-This repo ships **only the label splits** (`data/daic-woz/labels/`,
-`data/e-daic/labels/`), not the transcripts. Once approved, supply your URL to
-the download scripts — either pass `--base-url <URL>` per run, or paste it once
-into `PLACEHOLDER_BASE_URL` at the top of each script. The scripts read
-participant IDs from the bundled labels and fetch **text only** (audio/video
-discarded), and are resumable (existing transcripts are skipped). Without a URL
-they exit with an error.
+This repo ships **neither transcripts nor labels** — both come from your
+approved download. Two manual steps:
+
+**(a) Label files — place by hand.** Download the split CSVs from the approved
+source and drop them in these exact paths/names (the loaders look for them
+literally):
+
+```
+data/daic-woz/labels/
+    train_split_Depression_AVEC2017.csv
+    dev_split_Depression_AVEC2017.csv
+    full_test_split.csv
+data/e-daic/labels/                       # only for the zero-shot experiment (4e)
+    train_split.csv
+    dev_split.csv
+    test_split.csv
+    Detailed_PHQ8_Labels.csv
+```
+
+**(b) Transcripts — scripted.** Once labels are in place, supply your base URL to
+the download scripts (pass `--base-url <URL>` per run, or paste it once into
+`PLACEHOLDER_BASE_URL` at the top of each script). They read participant IDs from
+your labels and fetch **text only** (audio/video discarded), and are resumable
+(existing transcripts skipped). Without a URL they exit with an error.
 
 ```bash
 # DAIC-WOZ (the main corpus)
@@ -63,7 +73,7 @@ uv run python -m src.core.download_daicwoz --base-url <YOUR_DAICWOZ_URL>        
 uv run python -m src.core.download_daicwoz --base-url <YOUR_DAICWOZ_URL> --splits test   # one split
 uv run python -m src.core.download_daicwoz --base-url <YOUR_DAICWOZ_URL> --limit 5       # smoke test
 
-# E-DAIC (only needed for the zero-shot transfer experiment, step 4f)
+# E-DAIC (only needed for the zero-shot transfer experiment, step 4e)
 uv run python -m src.core.download_edaic --base-url <YOUR_EDAIC_URL>
 ```
 
@@ -73,11 +83,11 @@ is no separate preprocessing step to run):
 
 ```
 data/daic-woz/
-  raw/        {ID}_TRANSCRIPT.csv   (downloaded)
-  labels/     official AVEC2017 split CSVs (bundled)
+  labels/     AVEC2017 split CSVs   (placed by hand, step a)
+  raw/        {ID}_TRANSCRIPT.csv   (downloaded, step b)
 data/e-daic/
+  labels/     AVEC2019 split CSVs   (placed by hand, step a)
   raw/        {ID}_TRANSCRIPT.csv   (downloaded, converted to DAIC-WOZ schema)
-  labels/     AVEC2019 / E-DAIC split CSVs (bundled)
 ```
 
 ---
@@ -85,7 +95,7 @@ data/e-daic/
 ## 4. Run the experiments
 
 Each step is independent; run only what you need. Outputs go under `results/`
-and trained weights under `checkpoints/` (see §6). The first run of any encoder
+and trained weights under `checkpoints/` (see [6](#6-outputs-weights-reproducibility)). The first run of any encoder
 embeds + caches chunks to `cache/tcmil/` (slow once, fast after).
 
 ### 4a. Single-model headline (the main result)
@@ -158,8 +168,7 @@ the only shift measured is the domain shift.
 
 Tests whether fine-tuning the encoder *through* the MIL objective beats the
 frozen baseline. Staged so the test split is spent once. Scripts +
-editable config files are in `scripts/finetune/` (see §5). On an A100, budget
-≈ grid 15–25 GPU-h, finalists ≈ 8 GPU-h, CV ≈ 15 GPU-h.
+editable config files are in `scripts/finetune/` (see [5](#5-scripts)).
 
 ```bash
 # Install check (~2 min on GPU)
@@ -244,12 +253,10 @@ src/
   interpretability/ interpret_tcmil (attention faithfulness, PHQ-8, bias probes)
   statistics/      stats_tcmil, summarize_finetune, oof_ft_frozen_compare, …
   plotting/        figure builders
-scripts/           runnable experiment + cluster scripts (see §5)
-data/              daic-woz/ + e-daic/ (raw transcripts + bundled labels)
+scripts/           runnable experiment + cluster scripts (see 5. Scripts)
+data/              daic-woz/ + e-daic/ (user-provided labels + downloaded transcripts; git-ignored)
 results/           run outputs (results.json per run)
 checkpoints/       saved weights
 paper/             LaTeX manuscript, figures, refs
 doc/report/        design notes, baseline verification, backlog/roadmap (history)
 ```
-
-See `todo.md` for the working task list.

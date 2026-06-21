@@ -20,10 +20,11 @@ central directory lives at the *end* of the file — there is no reliable way to
 stop early, so each archive is downloaded in full to a temp file, the transcript
 is extracted, and the temp file is deleted.
 
-Labels are NOT downloaded: ``data/daic-woz/labels/`` already bundles the
-official AVEC 2017 split CSVs (``train_split_Depression_AVEC2017.csv``,
-``dev_split_Depression_AVEC2017.csv``, ``full_test_split.csv``). Participant IDs
-are read from those split CSVs, so only patients with a known PHQ-8 label are
+Labels are NOT downloaded and are NOT shipped with the repo: place the official
+AVEC 2017 split CSVs (``train_split_Depression_AVEC2017.csv``,
+``dev_split_Depression_AVEC2017.csv``, ``full_test_split.csv``) in
+``data/daic-woz/labels/`` by hand first (see README "Get the data"). Participant
+IDs are read from those split CSVs, so only patients with a known PHQ-8 label are
 fetched. The run is resumable: transcripts already on disk are skipped.
 
 Usage
@@ -67,7 +68,7 @@ SPLIT_FILES = {
 
 
 # ---------------------------------------------------------------------------
-# Labels (already bundled — used only to enumerate participant IDs)
+# Labels (placed by hand, not shipped — used only to enumerate participant IDs)
 # ---------------------------------------------------------------------------
 
 def read_participant_ids(labels_dir: Path, splits: list[str]) -> list[int]:
@@ -77,8 +78,9 @@ def read_participant_ids(labels_dir: Path, splits: list[str]) -> list[int]:
         path = labels_dir / SPLIT_FILES[split]
         if not path.exists():
             raise FileNotFoundError(
-                f"Missing split file: {path}. Expected the bundled AVEC 2017 "
-                f"DAIC-WOZ labels under {labels_dir}."
+                f"Missing split file: {path}. The AVEC 2017 DAIC-WOZ labels are "
+                f"not shipped — place them by hand under {labels_dir} (see README "
+                "\"Get the data\")."
             )
         df = pd.read_csv(path)
         ids.update(int(pid) for pid in df["Participant_ID"].tolist())
