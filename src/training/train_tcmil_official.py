@@ -241,6 +241,10 @@ def main():
     p.add_argument("--stride", type=int, default=2)
     p.add_argument("--participant_only", action="store_true",
                    help="Drop interviewer lines from chunks (Burdisso 2024 bias control).")
+    p.add_argument("--gap_merge", type=float, default=None,
+                   help="Silence-gap (s) participant-only segmentation matching the "
+                        "E-DAIC ASR pipeline; implies participant_only. Use the same "
+                        "value for DAIC train and E-DAIC zero-shot test.")
     p.add_argument("--proj_dim", type=int, default=128)
     p.add_argument("--attn_dim", type=int, default=64)
     p.add_argument("--dropout", type=float, default=0.4)
@@ -277,11 +281,14 @@ def main():
 
     # --- Data (official splits, subject-disjoint by construction) ---
     train_ivs = load_official_split(args.data_dir, "train", args.window, args.stride,
-                                    participant_only=args.participant_only)
+                                    participant_only=args.participant_only,
+                                    gap_merge=args.gap_merge)
     dev_ivs = load_official_split(args.data_dir, "dev", args.window, args.stride,
-                                  participant_only=args.participant_only)
+                                  participant_only=args.participant_only,
+                                  gap_merge=args.gap_merge)
     test_ivs = load_official_split(args.data_dir, "test", args.window, args.stride,
-                                   participant_only=args.participant_only)
+                                   participant_only=args.participant_only,
+                                   gap_merge=args.gap_merge)
     assert_no_leakage(train_ivs, dev_ivs, test_ivs)
     log.info(f"train={len(train_ivs)} dev={len(dev_ivs)} test={len(test_ivs)}")
     sizes = [len(iv["chunks"]) for iv in train_ivs]
@@ -386,7 +393,7 @@ def main():
             for p in test_prob_runs
         ]
         results["test_per_seed"] = per_seed_test
-        for k in ("macro_f1", "f1", "roc_auc"):
+        for k in ("precision", "recall", "f1", "macro_f1", "micro_f1", "roc_auc"):
             vals = [m[k] for m in per_seed_test]
             log.info(f"TEST per-seed {k} (t={best_t:.2f}): "
                      f"{np.mean(vals):.4f} ± {np.std(vals):.4f}")

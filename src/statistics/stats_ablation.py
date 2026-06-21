@@ -41,10 +41,22 @@ LEGACY = ["dialogue_mean", "flat_mil_mean", "flat_mil_attn", "damil_r",
 from src.training.train_tcmil_official import tune_threshold
 from src.core.utils.metrics import compute_metrics
 
-# A-priori prevalence threshold rates (same used to produce the stored
-# macro-F1): train prevalence for the official split, CV-pool prevalence for
-# K-Fold/MC. micro-F1 (≡ accuracy) is recomputed at this fixed rate, so it is
-# honest, not a test-tuned oracle.
+# A-priori prevalence threshold rates: train prevalence for the official split,
+# CV-pool prevalence for K-Fold/MC. Every threshold-dependent metric (UAR
+# [= balanced accuracy], micro-F1 [= accuracy], pos-/macro-F1, precision,
+# recall) is recomputed at this fixed rate, so it is honest, not a test-tuned
+# oracle.
+#
+# CAVEAT (threshold source for the paper tables): the published official-split
+# numbers in tab:ladder / tab:external / tab:stats come from THIS module --
+# per-seed metrics rate-matched to a-priori prevalence on each seed's own test
+# probabilities (see _official_per_seed). They are NOT the `test_per_seed` /
+# `test_by_strategy["prevalence"]` fields in results.json: those apply the
+# DEV-selected threshold (t=0.35 for the headline run), which on the test split
+# yields a ~0.43 positive rate -> recall-heavy, higher-f1, lower-precision
+# numbers that do NOT match the paper. Always regenerate paper tables via this
+# a-priori-prevalence reduction; do not read results.json test_per_seed
+# directly.
 OFFICIAL_PREV = 0.28
 
 

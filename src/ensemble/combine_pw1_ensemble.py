@@ -50,7 +50,7 @@ def main():
     # --- Full 30-seed ensemble: average matched-seed prob pairs ---
     ens = [(A[i] + B[i]) / 2 for i in range(n)]
     em = per_seed_metrics(ens, y)
-    for k in ("macro_f1", "micro_f1", "roc_auc"):
+    for k in ("precision", "recall", "f1", "macro_f1", "micro_f1", "roc_auc"):
         v = np.array([m[k] for m in em])
         print(f"  full {n}-seed ensemble {k}: {v.mean():.3f} ± {v.std():.3f}")
     macro = np.array([m["macro_f1"] for m in em])
@@ -72,7 +72,7 @@ def main():
         prob = np.mean(stack, axis=0)
         tt = tune_threshold(None, prob, metric="prevalence", prevalence=PREV)
         grp.append(compute_metrics(y, (prob >= tt).astype(int), prob))
-    for k in ("macro_f1", "micro_f1", "roc_auc"):
+    for k in ("precision", "recall", "f1", "macro_f1", "micro_f1", "roc_auc"):
         v = np.array([m[k] for m in grp])
         print(f"    {k}: {v.mean():.3f} ± {v.std():.3f}")
     gm = np.array([m["macro_f1"] for m in grp])

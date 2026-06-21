@@ -60,7 +60,7 @@ def boot_ci(prob, y, n=2000, seed=42):
     rng = np.random.default_rng(seed)
     t = tune_threshold(None, prob, metric="prevalence", prevalence=PREV)
     pred = (prob >= t).astype(int)
-    keys = ("macro_f1", "micro_f1", "f1", "roc_auc")
+    keys = ("precision", "recall", "f1", "macro_f1", "micro_f1", "roc_auc")
     boots = {k: [] for k in keys}
     N = len(y)
     for _ in range(n):
@@ -87,32 +87,31 @@ def main():
 
     L = ["# Ensemble statistics — bge-gru + uae-gru (temp-scaled, prevalence)\n"]
 
-    # 1. per-seed mean+/-std
+    # 1. per-seed mean+/-std (precision, recall, pos-F1, macro-, micro-, ROC-AUC)
+    METRICS = ("precision", "recall", "f1", "macro_f1", "micro_f1", "roc_auc")
+    HEAD = ("Prec.", "Recall", "pos-F1", "macro-F1", "micro-F1", "ROC-AUC")
+    cell = lambda v: f"{v.mean():.3f}±{v.std():.3f}"
     L.append("## Per-seed (mean +/- std)\n")
-    L.append("| protocol | macro-F1 | micro-F1 | ROC-AUC |")
-    L.append("|---|---|---|---|")
-    full = {k: per_seed_macro(ens, y, k) for k in ("macro_f1", "micro_f1", "roc_auc")}
-    L.append(f"| full {n}-seed | {full['macro_f1'].mean():.3f}±{full['macro_f1'].std():.3f} "
-             f"| {full['micro_f1'].mean():.3f}±{full['micro_f1'].std():.3f} "
-             f"| {full['roc_auc'].mean():.3f}±{full['roc_auc'].std():.3f} |")
+    L.append("| protocol | " + " | ".join(HEAD) + " |")
+    L.append("|---|" + "---|" * len(METRICS))
+    full = {k: per_seed_macro(ens, y, k) for k in METRICS}
+    L.append(f"| full {n}-seed | " + " | ".join(cell(full[k]) for k in METRICS) + " |")
     g = n // 5
-    grp = {k: [] for k in ("macro_f1", "micro_f1", "roc_auc")}
+    grp = {k: [] for k in METRICS}
     for gi in range(g):
         prob = np.mean(ens[gi*5:gi*5+5], axis=0)
         t = tune_threshold(None, prob, metric="prevalence", prevalence=PREV)
         m = compute_metrics(y, (prob >= t).astype(int), prob)
         for k in grp: grp[k].append(m[k])
     grp = {k: np.array(v) for k, v in grp.items()}
-    L.append(f"| {g}x(5+5) | {grp['macro_f1'].mean():.3f}±{grp['macro_f1'].std():.3f} "
-             f"| {grp['micro_f1'].mean():.3f}±{grp['micro_f1'].std():.3f} "
-             f"| {grp['roc_auc'].mean():.3f}±{grp['roc_auc'].std():.3f} |")
+    L.append(f"| {g}x(5+5) | " + " | ".join(cell(grp[k]) for k in METRICS) + " |")
 
     # 2. subject-level bootstrap CI on seed-averaged ensemble
     L.append(f"\n## Subject-level bootstrap 95% CI (2000 resamples, N={len(y)})\n")
     ci = boot_ci(np.mean(ens, axis=0), y)
     L.append("| metric | point | 95% CI |")
     L.append("|---|---|---|")
-    for k in ("macro_f1", "micro_f1", "roc_auc"):
+    for k in ("precision", "recall", "f1", "macro_f1", "micro_f1", "roc_auc"):
         p, lo, hi = ci[k]
         L.append(f"| {k} | {p:.3f} | [{lo:.3f}, {hi:.3f}] |")
 

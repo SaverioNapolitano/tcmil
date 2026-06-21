@@ -230,6 +230,67 @@ def process_transcript(
     return qa_pairs, interviewer_utterances, participant_utterances
 
 
+def merge_by_gap(
+    turns: list[dict],
+    gap_threshold: float = 2.0,
+) -> list[dict]:
+    """Merge consecutive participant ASR segments into utterance instances.
+
+    E-DAIC transcripts are un-diarized ASR output: every row is a short
+    participant fragment (~1-3 s) with no speaker turns, so the speaker-based
+    ``merge_consecutive_turns`` would collapse the whole session into a single
+    instance. Instead we group fragments into utterance-like instances using
+    silence: a gap >= ``gap_threshold`` seconds between one segment's stop_time
+    and the next segment's start_time starts a new instance.
+
+    Args:
+        turns: List of turn dicts sorted chronologically.
+        gap_threshold: Minimum silence (seconds) that splits two instances.
+
+    Returns:
+        List of merged turn dicts (one per utterance instance).
+    """
+    if not turns:
+        return []
+
+    merged = [turns[0].copy()]
+    for turn in turns[1:]:
+        prev = merged[-1]
+        if turn["start_time"] - prev["stop_time"] < gap_threshold:
+            prev["value"] = prev["value"] + " " + turn["value"]
+            prev["stop_time"] = max(prev["stop_time"], turn["stop_time"])
+        else:
+            merged.append(turn.copy())
+    return merged
+
+
+def process_edaic_transcript(
+    transcript_path: str | Path,
+    gap_threshold: float = 2.0,
+) -> list[str]:
+    """Preprocess a converted E-DAIC transcript into participant-only instances.
+
+    E-DAIC has no interviewer (Ellie) turns, so the Q-A pairing used for
+    DAIC-WOZ does not apply. This produces participant-only utterance instances
+    via gap-based segmentation, for the zero-shot generalization experiment
+    (TCMIL trained on DAIC-WOZ, tested on E-DAIC). For a matched comparison, run
+    DAIC-WOZ through the participant-only path as well (see process_transcript's
+    participant_utterances output).
+
+    Args:
+        transcript_path: Path to a converted E-DAIC transcript
+            (``{ID}_TRANSCRIPT.csv``, DAIC-WOZ TSV schema, speaker=Participant).
+        gap_threshold: Silence (seconds) that splits two utterance instances.
+
+    Returns:
+        List of cleaned participant utterance instance strings (the MIL bag).
+    """
+    turns = parse_raw_transcript(transcript_path)
+    turns = [t for t in turns if t["speaker"] == "Participant"]
+    instances = merge_by_gap(turns, gap_threshold=gap_threshold)
+    return [t["value"] for t in instances if t["value"]]
+
+
 def process_all_transcripts(
     data_dir: str | Path,
     participant_ids: list[int],
