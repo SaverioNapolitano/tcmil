@@ -12,7 +12,7 @@
 ##SBATCH --account=YOUR_ACCOUNT
 #
 # JOB 3 — Stage-2 finalists (export_oof + official test). Needs JOB 2 finished
-# AND cluster/finalists_configs.txt edited with the grid winners.
+# AND scripts/finetune/configs/finalists_configs.txt edited with the grid winners.
 # array size = number of finalist lines (= band-selected finalists + 1 frozen,
 # so 2-5 — set --array to match the line count). Each task = one finalist
 # (OOF threshold probe, then 30-seed official test). Longer walltime: the OOF
@@ -21,4 +21,4 @@ set -e
 export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p results/ft/logs
-bash cluster/run_ft_finalists.sh "$SLURM_ARRAY_TASK_ID"
+bash scripts/finetune/run_finalists.sh "$SLURM_ARRAY_TASK_ID"

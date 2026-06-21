@@ -2,8 +2,8 @@
 \IEEEoverridecommandlockouts
 % TC-MIL: Topic-Chunk Multiple-Instance Learning for text-only DAIC-WOZ
 % depression detection. Single-model headline + zero-shot E-DAIC transfer.
-% Two-encoder ensemble and encoder fine-tuning extracted to sec_ensemble.tex /
-% sec_finetuning.tex and out of scope for this draft.
+% Encoder fine-tuning extracted to sec_finetuning.tex and out of scope for
+% this draft.
 
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
@@ -635,10 +635,8 @@ to clear it: test-time MC-dropout averaging (lever 6, $T{=}30$) is flat (macro-F
 0.771, AUC unchanged), and unioning multiple chunk granularities (lever 7,
 $w2{+}w4{+}w6$) nudges macro-F1 to 0.782 but at $2.4\times$ the seed variance and
 no AUC gain. This is exactly what the oracle ceiling predicts --- with the
-encoder frozen the probabilities have no robust headroom, and improving the
-\emph{ranking} requires fine-tuning the encoder. The
-final recipe is therefore the base model with $pos\_weight=1.0$; the remaining
-axis that could raise the AUC ceiling is encoder fine-tuning.
+encoder frozen the probabilities have no robust headroom. The
+final recipe is therefore the base model with $pos\_weight=1.0$.
 
 \begin{figure}[t]
 \centering
@@ -828,9 +826,6 @@ The pattern is consistent with the ladder: TC-MIL's largest and most
 significant margins are on the official split and the Monte Carlo internal
 split, and the model leads on every protocol \emph{headline} even where a
 single per-run $K$-Fold contrast is inconclusive.
-
-% Two-encoder ensemble extracted to sec_ensemble.tex (single-model scope).
-%\input{sec_ensemble.tex}
 
 \section{Statistical Significance Summary}
 \label{sec:stats}
@@ -1236,7 +1231,7 @@ peakier, more selectable attention; de-biasing improves the decision but
 slightly blurs the per-chunk attribution. We therefore report the F1
 improvement and the faithfulness behaviour as separate, independent findings.
 
-%\input{sec_finetuning}
+\input{sec_finetuning}
 
 \section{Cross-Corpus Generalization: Zero-Shot Transfer to E-DAIC}
 \label{sec:edaic}
@@ -1426,8 +1421,7 @@ Int.\ Audio/Visual Emotion Challenge and Workshop (AVEC)}, 2019, pp. 3--12.
 relevance of discourse structure for improved mental health estimation,'' in
 \emph{Proc.\ 9th Workshop on Computational Linguistics and Clinical Psychology
 (CLPsych)}, 2024, pp. 127--132.
-% Cited only by the commented-out ensemble section (sec_ensemble.tex) and the
-% removed two-branch/LLM comparison; re-enable with \input{sec_ensemble.tex}.
+% Uncited (was the removed two-encoder ensemble and two-branch/LLM comparison).
 %\bibitem{merzougui2025} D. E. Merzougui, G. Dias, J. Pantin, and F. Maurel,
 %``Evaluating large language models for depression symptom estimation,'' in
 %\emph{Proc.\ Artificial Intelligence in Medicine (AIME)}, 2025.

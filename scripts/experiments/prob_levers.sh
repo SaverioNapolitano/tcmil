@@ -1,9 +1,9 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+# Probability-lever single-model runs: checkpointed headline (for MC-dropout)
+# and the multi-granularity-bag variant. Standalone — run any time.
+set -e
+cd "$(dirname "$0")/../.."
 PY=.venv/bin/python
-echo "=== [$(date +%H:%M:%S)] wait B6 NCL ==="
-while [ ! -f results/ensemble/ncl_bge_uae/results.json ]; do sleep 30; done
-echo "=== [$(date +%H:%M:%S)] B6 done ==="
 
 # 1) ckpt-retrain headline single (new dir, canonical untouched) -> MC-dropout
 echo "=== [$(date +%H:%M:%S)] retrain single (w/ ckpts) ==="

@@ -1,6 +1,6 @@
 """Leakage-free OOF analysis of the Stage-2 fine-tuning finalists.
 
-Stage 2 of the fine-tuning study (README_FINETUNE) gives every finalist a
+Stage 2 of the fine-tuning study (see README) gives every finalist a
 nested out-of-fold (OOF) probe over the train+dev pool (one leakage-free
 probability per subject) to fix the decision threshold. That same probe is a
 leakage-free, larger-N (N=142 vs. dev N=35) estimate of how the finalists rank

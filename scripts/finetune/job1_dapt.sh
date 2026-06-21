@@ -13,7 +13,7 @@
 # JOB 1 — Domain-adaptive pretraining (MLM on the train split only).
 # Produces checkpoints/dapt_bge_large, used by the two DAPT grid configs in
 # JOB 2. OPTIONAL: skip if you don't want the DAPT arm (then also drop the
-# dapt_* lines from cluster/ft_grid_configs.txt).
+# dapt_* lines from scripts/finetune/configs/grid_configs.txt).
 set -e
 export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
 cd "$SLURM_SUBMIT_DIR"

@@ -1,12 +1,12 @@
 #!/bin/bash
-# TC-MIL design ablations, FULL189 split, pos_weight=1.0, dev-only 5-seed.
-# Re-runs the 185-era dev ablations under the headline protocol so the paper
-# design-ablation table is consistent with the full189 / pw1.0 main results.
+# TC-MIL design ablations, full split, pos_weight=1.0, dev-only 5-seed.
+# Re-runs the dev ablations under the headline protocol so the paper
+# design-ablation table is consistent with the pw1.0 main results.
 # Baseline = bge-large, temporal=gru, w4 s2, dropout 0.4, proj 128, aux 0.3.
 # NOT set -e: one failing encoder must not abort the suite.
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 PY=.venv/bin/python
-OUT=results/full189/abl
+OUT=results/design_ablations/grid
 mkdir -p "$OUT"
 COMMON="--pos_weight 1.0 --n_seeds 5 --base_seed 42 --threshold_metric prevalence --window 4 --stride 2 --max_len 256"
 

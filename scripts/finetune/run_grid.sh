@@ -1,8 +1,8 @@
 #!/bin/bash
 # Stage 1: dev-selection grid (official protocol, NO test evaluation).
 #
-#   ./cluster/run_ft_grid.sh           -> run every config sequentially
-#   ./cluster/run_ft_grid.sh 5         -> run only line 5 (for SLURM arrays)
+#   ./scripts/finetune/run_grid.sh           -> run every config sequentially
+#   ./scripts/finetune/run_grid.sh 5         -> run only line 5 (for SLURM arrays)
 #
 # Prerequisites (once):
 #   pip install peft               # or: uv add peft
@@ -11,9 +11,9 @@
 #       --ft_method lora            # install check, ~2 min
 set -e
 export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
-CONFIGS=cluster/ft_grid_configs.txt
+CONFIGS=scripts/finetune/configs/grid_configs.txt
 LINES=$(grep -v '^#' "$CONFIGS" | grep -v '^$')
 
 run_line() {

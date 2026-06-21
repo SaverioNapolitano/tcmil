@@ -12,11 +12,11 @@
 ##SBATCH --account=YOUR_ACCOUNT
 #
 # JOB 4 — Stage-3 cross-validation (winner vs frozen). Needs JOB 2 finished AND
-# cluster/cv_configs.txt edited with the grid winner. array size = number of cv
+# scripts/finetune/configs/cv_configs.txt edited with the grid winner. array size = number of cv
 # lines (default 2). Each task = one config (kfold + kfold_r2 + mc). Independent
 # of JOB 3 -> JOB 3 and JOB 4 can run at the same time (mind the 4-job cap).
 set -e
 export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p results/ft/logs
-bash cluster/run_ft_cv.sh "$SLURM_ARRAY_TASK_ID"
+bash scripts/finetune/run_cv.sh "$SLURM_ARRAY_TASK_ID"

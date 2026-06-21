@@ -1,15 +1,15 @@
 #!/bin/bash
 # Stage 3 body — cross-validation, config + task-id driven.
-#   ./cluster/run_ft_cv.sh         -> all configs sequentially
-#   ./cluster/run_ft_cv.sh 1       -> only line 1 (SLURM array task)
+#   ./scripts/finetune/run_cv.sh         -> all configs sequentially
+#   ./scripts/finetune/run_cv.sh 1       -> only line 1 (SLURM array task)
 # Per config: kfold + kfold repeat-2 (seed 1042) + mc, all --threshold_mode
 # testprev. Encoder fine-tuned per fold (leakage-safe). Frozen-pipeline ref:
 # single K-Fold per-run AUC 0.799 / macro-F1 0.706 (pos_weight=1.0).
-# Configs (EDIT after the grid): cluster/cv_configs.txt
+# Configs (EDIT after the grid): scripts/finetune/configs/cv_configs.txt
 set -e
 export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
-cd "$(dirname "$0")/.."
-CONFIGS=cluster/cv_configs.txt
+cd "$(dirname "$0")/../.."
+CONFIGS=scripts/finetune/configs/cv_configs.txt
 LINES=$(grep -v '^#' "$CONFIGS" | grep -v '^$')
 
 # Skip a whole protocol call if it already finished (results.json present).

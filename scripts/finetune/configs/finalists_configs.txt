@@ -1,5 +1,5 @@
 # Stage-2 finalists — SELECTED from job-2 grid by the PRE-REGISTERED rule
-# (README_FINETUNE.md / summarize_finetune.py::select_finalists): the top configs
+# (README "Stage 2" / summarize_finetune.py::select_finalists): the top configs
 # within one seed-noise band (+/-0.015) of the best 5-seed PER-SEED dev AUC mean,
 # capped at 4, + frozen control. NB: selection is per-seed single-model AUC, NOT
 # the dev-ensemble AUC (ensemble averaging cancels seed noise -> flatters

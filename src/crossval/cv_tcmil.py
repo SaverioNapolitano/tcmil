@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.core.tcmil_data import embed_chunks, load_official_split
-from src.ensemble.oof_threshold_official import build_oof_probs
+from src.crossval.oof_threshold_official import build_oof_probs
 from src.training.train_tcmil_official import (
     ChunkBagDataset,
     collate,

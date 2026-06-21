@@ -75,7 +75,7 @@ def main():
 
 
 def select_finalists(official, band=0.015, cap=4):
-    """Pre-registered stage-2 finalist selection (DEV only, see README_FINETUNE).
+    """Pre-registered stage-2 finalist selection (DEV only, see README "Stage 2").
     Pick every NON-frozen config whose 5-seed per-seed dev AUC mean is within one
     seed-noise band of the best, capped at `cap` to bound test-set multiplicity.
     Frozen control is always carried separately; adoption gate (chosen dev AUC >
@@ -115,7 +115,7 @@ def select_finalists(official, band=0.015, cap=4):
     if fz is not None:
         out.append("\nfrozen control dev AUC %.4f (adoption needs a finalist > %.4f)."
                    % (fz, fz + band))
-    out.append("\nPut these (+ frozen) in cluster/finalists_configs.txt; "
+    out.append("\nPut these (+ frozen) in scripts/finetune/configs/finalists_configs.txt; "
                "set the job-3 array to (#finalists + 1). With >1 finalist, "
                "Holm-correct the FT-vs-frozen test p-values.")
     return "\n".join(out) + "\n"

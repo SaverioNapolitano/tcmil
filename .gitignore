@@ -1,13 +1,10 @@
 data/
 results/
-.claude/
 *.pdf 
-results/
-results_old/
 cache/
-.code-review-graph/
 IEEE*/
 checkpoints/
+tacl/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

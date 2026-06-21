@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 PY=.venv/bin/python
 for pw in 1.5 2.0; do
   d="results/single_model/lever_pos_weight/single_pw_${pw}_30seed"

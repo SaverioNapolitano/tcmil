@@ -12,8 +12,8 @@
 # Adjust partition/account to your cluster:
 ##SBATCH --partition=gpu
 
-# One grid config per array task (lines of cluster/ft_grid_configs.txt).
+# One grid config per array task (lines of scripts/finetune/configs/grid_configs.txt).
 # DAPT configs (lines 19-20) need checkpoints/dapt_bge_large to exist first:
-#   sbatch --dependency=afterok:<dapt_job> cluster/slurm_ft_grid.sh
+#   sbatch --dependency=afterok:<dapt_job> scripts/finetune/slurm_grid.sh
 export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
-bash cluster/run_ft_grid.sh "$SLURM_ARRAY_TASK_ID"
+bash scripts/finetune/run_grid.sh "$SLURM_ARRAY_TASK_ID"

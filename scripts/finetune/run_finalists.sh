@@ -1,15 +1,15 @@
 #!/bin/bash
 # Stage 2 body — official-protocol finalists, config + task-id driven.
-#   ./cluster/run_ft_finalists.sh         -> all finalists sequentially
-#   ./cluster/run_ft_finalists.sh 2       -> only line 2 (SLURM array task)
+#   ./scripts/finetune/run_finalists.sh         -> all finalists sequentially
+#   ./scripts/finetune/run_finalists.sh 2       -> only line 2 (SLURM array task)
 # Per finalist:
 #   a) export_oof : nested K-Fold fine-tuning per fold -> leakage-free OOF threshold
 #   b) official   : 30 seeds, dev early stop, test ONCE with the OOF threshold
-# Configs (EDIT after the grid): cluster/finalists_configs.txt
+# Configs (EDIT after the grid): scripts/finetune/configs/finalists_configs.txt
 set -e
 export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
-cd "$(dirname "$0")/.."
-CONFIGS=cluster/finalists_configs.txt
+cd "$(dirname "$0")/../.."
+CONFIGS=scripts/finetune/configs/finalists_configs.txt
 LINES=$(grep -v '^#' "$CONFIGS" | grep -v '^$')
 
 # Skip a whole protocol call if it already finished (results.json present).
