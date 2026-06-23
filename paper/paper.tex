@@ -381,8 +381,8 @@ against the reported 0.739.
 \label{sec:external}
 
 \Cref{tab:external} is the headline result: a single TC-MIL network on the
-official test split against the verified leakage-free text-only single-model
-baselines. For direct comparison the table shows only the metrics the text-only
+official test split against the verified text-only single-model baselines of
+\Cref{sec:related}. For direct comparison the table shows only the metrics the text-only
 literature reports; the full metric set for TC-MIL and the internal baselines is
 in \Cref{tab:ladder}. The TC-MIL cells are the 30-seed per-seed mean$\pm$std at
 the a-priori prevalence threshold, where pos-F1 is the positive-class F1 and
@@ -470,7 +470,9 @@ participant turns and the interviewer turns through separate attention streams
 and lets each condition on the other, so that an answer is read in the light of
 the question that prompted it. This rebuilds part of the dialogue context that
 a flat utterance bag discards, and it is the single largest jump in the legacy
-ladder (\Cref{tab:ladder}). \textbf{SS-DAMIL-R} (\emph{Symptom-Supervised
+ladder (\Cref{tab:ladder}).
+
+\textbf{SS-DAMIL-R} (\emph{Symptom-Supervised
 DAMIL-R}) adds a PHQ-8 symptom-prediction objective on top of DAMIL-R --- the
 same idea TC-MIL later reuses as a pure auxiliary regulariser. \emph{SS-DAMIL-R\,(MH)} is the canonical symptom-supervised model with \emph{multi-head}
 pooling and is the legacy ceiling; \emph{SS-DAMIL-R\,(GSI)} replaces the
@@ -524,16 +526,18 @@ nothing to select. Second, \emph{role context is the biggest legacy lever}
 context through cross-role attention, which TC-MIL obtains more directly by
 placing the dialogue inside the instance text. Third, the strongest pooled-CV performers all instantiate the
 MH architecture and differ only in augmentation hyperparameters, and the two
-genuinely distinct variants (GSI, Conv) do not surpass MH under the leakage-free
-protocol. TC-MIL is not only higher in the mean but also more stable: its AUC
-standard deviation is roughly five times tighter than that of the best legacy
-model. We note that, against the role-aware models, the per-run
-cross-validation differences are not always significant (\Cref{sec:internal});
-TC-MIL's clearest margins are on the official split --- where every per-seed gap
-to a baseline is significant (\Cref{tab:stats}) --- and the Monte Carlo
-headline. \Cref{fig:forest} shows the official-split macro-F1 of the whole
-ladder with subject-bootstrap 95\% CIs and the reference baseline \cite{milintsevich2023}: TC-MIL
-is the only model whose interval clears the 0.739 line, while the wide
+genuinely distinct variants (GSI, Conv) do not surpass MH.
+
+TC-MIL is not only higher in the mean but also more stable: its AUC standard
+deviation is roughly five times tighter than that of the best legacy model.
+Against the role-aware models the per-run cross-validation differences are not
+always significant (\Cref{sec:internal}); TC-MIL's clearest margins are on the
+official split, where every per-seed gap to a baseline is significant
+(\Cref{tab:stats}), and on the Monte Carlo headline.
+
+\Cref{fig:forest} shows the official-split macro-F1 of the whole ladder with
+subject-bootstrap 95\% CIs and the reference baseline \cite{milintsevich2023}:
+TC-MIL is the only model whose interval clears the 0.739 line, while the wide
 intervals of the weak models reflect their unstable, rate-matched probabilities.
 
 \begin{figure}[t]
@@ -618,11 +622,11 @@ variants (lever 1 OOF, lever 8 dev-prevalence) both sit \emph{below} the
 a-priori prevalence of lever 3, confirming that prevalence-matching is the best
 decision rule.
 \Cref{fig:calib} makes the mechanism visual: with $pos\_weight=$auto the
-prevalence-threshold operating point sits below the model's own oracle on
-the threshold--macro-F1 curve (a $\approx$0.06 decision gap) and the reliability
-curve is skewed; $pos\_weight=1.0$ moves the operating point onto the peak (gap
-$\approx$0.02) and straightens the reliability curve --- a calibration fix, not
-a ranking one (the AUC barely moves). The symptom-informed decision (lever 4) could
+prevalence-threshold operating point sits about 0.06 below the model's own oracle
+on the threshold--macro-F1 curve and the reliability curve is skewed;
+$pos\_weight=1.0$ moves the operating point onto the peak, closing the gap to
+$\approx$0.02 and straightening the reliability curve --- a calibration fix, not
+a ranking one, since the AUC barely moves. The symptom-informed decision (lever 4) could
 not be tuned without leaking the tiny dev set, and a much larger frozen encoder
 (lever 5, a 1.5B causal model with last-token pooling) was \emph{lower} on
 every metric (AUC 0.804, macro-F1 0.695) with about twice the seed
@@ -746,7 +750,7 @@ as confirmation, never to choose between configurations.
 \section{Internal Comparison: Cross-Validation}
 \label{sec:internal}
 
-The official-split comparison is external (against the literature). To check
+The official-split comparison is external. To check
 that the ranking is not an artifact of one split, we cross-validate on the
 training pool only (142 subjects, test excluded), which is an \emph{internal}
 comparison specific to our protocol. We use repeated Stratified Group $K$-Fold
@@ -1045,7 +1049,9 @@ the instance embeddings, so the leave-one-out drop is essentially proportional
 to the attention weight (within-interview $\rho=+0.99$, $n=46$,
 $p<10^{-99}$). This faithfulness is, however, uninformative --- the attention
 is almost uniform (weights in $[0.02,0.07]\approx 1/N$) and cross-seed
-stability is correspondingly high (0.97). Adding the GRU temporal head couples
+stability is correspondingly high (0.97).
+
+Adding the GRU temporal head couples
 the chunks through the recurrence: removing one perturbs the representation of
 the others, the attention becomes selective (weights up to 0.55, stability
 0.60) and \emph{ceases to be per-chunk faithful} --- the within-interview
@@ -1217,7 +1223,352 @@ peakier, more selectable attention; de-biasing improves the decision but
 slightly blurs the per-chunk attribution. We therefore report the F1
 improvement and the faithfulness behaviour as separate, independent findings.
 
-\input{sec_finetuning}
+\section{Does Fine-Tuning the Encoder Help?}
+\label{sec:finetune}
+
+Every result so far keeps the sentence encoder \emph{frozen}: the
+single-lever study (\Cref{tab:levers}) showed the remaining headroom is in the
+\emph{ranking}, not the decision rule, therefore to lift the AUC ceiling a possibility is
+to fine-tune the encoder.
+Fine-tuning an $n\!=\!107$ corpus is the regime where over-fitting is most
+likely, so the study is run as a pre-registered, staged search that selects on
+development data and touches the official test split only once, for a small set
+of finalists.
+
+\subsection{Fine-tuning menu and staged protocol}
+\label{sec:finetune-protocol}
+We compare five adaptation regimes against the frozen baseline, ordered by
+trainable-parameter budget: (i) \textbf{frozen} (control, embeddings only);
+(ii) \textbf{BitFit} (bias terms only); (iii) \textbf{LoRA} low-rank adapters on
+the attention (optionally FFN) projections, rank $r\!\in\!\{8,16,32\}$;
+(iv) \textbf{last-$k$} unfreezing of the top $k\!\in\!\{2,4\}$ transformer
+blocks with layer-wise LR decay; and (v) \textbf{full} fine-tuning. We also test
+\textbf{domain-adaptive pre-training} (DAPT): a masked-LM pass over the training
+interviews before the supervised stage. The encoder is \texttt{bge-large-en-v1.5}
+throughout; one arm swaps in \texttt{mxbai-embed-large-v1} to check
+encoder sensitivity. The temporal GRU pooling head
+(\Cref{sec:method}) is unchanged.
+
+Selection is staged to ring-fence the test split:
+\begin{itemize}
+  \item \textbf{Stage 1 --- development grid.} 20 configurations, 5 seeds each,
+        \emph{official protocol but no test evaluation}. Configurations are ranked on the 5-seed
+        \emph{per-seed mean} development ROC-AUC --- the same quantity reported
+        at test time.
+  \item \textbf{Stage 2 --- finalists.} Every configuration whose per-seed mean
+        development AUC is within one seed-noise band ($\pm0.015$) of the best,
+        capped at four, plus the frozen control, advances. Each gets a
+        leakage-free decision threshold from a nested out-of-fold (OOF) probe and
+        is then evaluated \emph{once} on the official test split over 30 seeds.
+  \item \textbf{Stage 3 --- cross-validation.} The single winner and the frozen
+        control are re-evaluated under $K$-fold (with a repeat) and
+        Monte-Carlo cross-validation on the training pool, mirroring
+        \Cref{sec:internal}.
+\end{itemize}
+All encoder adaptation happens \emph{inside} each fold; no test or
+held-out interview is ever seen during fine-tuning or thresholding.
+
+\subsection{Development-grid selection}
+\label{sec:finetune-iter1}
+
+A practical caveat governs how the grid is read. The development split is
+$n\!=\!35$ interviews (12 positive); at this size the \emph{thresholded} metrics
+are quantised --- many unrelated configurations land on the identical confusion
+matrix --- so they carry little ranking signal. We therefore rank on the
+per-seed mean ROC-AUC, the only continuous discriminator, and treat AUC gaps
+below $\approx\!0.01$ as noise. \Cref{tab:ft-grid} reports the representative
+configurations.
+
+These dev figures are produced by the fine-tuning harness --- which trains the
+MIL head with a shorter, more strongly regularised schedule than the
+design-ablation pipeline of \Cref{tab:abldesign-rep} (and embeds under mixed
+precision) --- so they are internally consistent but \emph{not} numerically
+comparable to that table's frozen dev AUC. All fine-tuning effects are therefore
+measured against the in-harness frozen control, not against the design-ablation
+numbers; the headline frozen reference remains the once-only official-test bar.
+
+\begin{table}[t]
+\caption{Fine-tuning grid, development split, ranked by the
+selection metric. \textbf{AUC} is the per-seed mean$\pm$std over 5 seeds (the
+selection metric); \textbf{ens.\ AUC} is the 5-seed probability ensemble. Adopted
+Stage-2 finalists in \textbf{bold}.}
+\label{tab:ft-grid}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Configuration} & \textbf{AUC (per-seed)} & \textbf{ens.\ AUC} \\
+\midrule
+\textbf{mxbai, LoRA $r$16, lr1e-4}  & \textbf{0.916}{\footnotesize$\pm$.005} & 0.917 \\
+\textbf{LoRA $r$16+FFN, lr1e-4}     & \textbf{0.915}{\footnotesize$\pm$.008} & 0.920 \\
+\textbf{LoRA $r$8, lr2e-4}          & \textbf{0.913}{\footnotesize$\pm$.010} & 0.924 \\
+\textbf{last-4, lr1e-5}             & \textbf{0.908}{\footnotesize$\pm$.008} & 0.899 \\
+LoRA $r$16, lr2e-4                  & 0.907{\footnotesize$\pm$.022} & 0.920 \\
+full, lr1e-5                        & 0.906{\footnotesize$\pm$.006} & 0.899 \\
+last-2, lr2e-5                      & 0.899{\footnotesize$\pm$.005} & 0.899 \\
+BitFit, lr1e-4                      & 0.899{\footnotesize$\pm$.010} & 0.902 \\
+LoRA $r$32, lr1e-4                  & 0.893{\footnotesize$\pm$.053} & 0.924 \\
+frozen (control)                   & 0.892{\footnotesize$\pm$.003} & 0.884 \\
+mxbai, frozen                      & 0.886{\footnotesize$\pm$.003} & 0.884 \\
+LoRA $r$16, lr1e-4                  & 0.888{\footnotesize$\pm$.052} & 0.920 \\
+\midrule
+DAPT, frozen                       & 0.709{\footnotesize$\pm$.044} & 0.707 \\
+DAPT, LoRA $r$16                    & 0.708{\footnotesize$\pm$.078} & 0.649 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three findings emerge. \textbf{(1) Encoder adaptation gives a modest, real
+lift.} The best single-model configurations reach a per-seed mean AUC of
+$\approx\!0.915$ against the frozen control's $0.892$ --- a $\approx\!+0.02$ AUC
+gain that clears the pre-registered adoption band. The lift is smaller and the
+field tighter than the ensemble metric suggests: the top LoRA, \texttt{last-}4,
+and full configurations ($0.906$--$0.916$) are all within seed noise of one
+another, so it does \emph{not} establish a single method as the winner
+--- only that lightweight adaptation helps and that the choice among
+parameter-efficient methods must be settled on the test split. We nonetheless
+note that LoRA supplies the most \emph{stable} top configurations (low per-seed
+variance at high mean), whereas the configurations the ensemble metric would
+have promoted --- LoRA $r$32/$r$16 at lr1e-4 --- carry $\pm.05$ seed variance and
+sit at single-model rank $\approx\!11$, a cautionary example of the
+ensemble--single-model mismatch. \textbf{(2) The encoder swap is neutral.}
+\texttt{mxbai} matches \texttt{bge} under both frozen ($0.886$ vs.\ $0.892$) and
+LoRA ($0.916$ vs.\ $0.915$); it is the nominal rank-1 single model but is within
+noise of the \texttt{bge} leaders. \textbf{(3) DAPT collapses.} Both DAPT arms
+fall to $0.65$--$0.71$ AUC --- far \emph{below} the no-adaptation baseline ---
+and predict the majority class (per-seed F1 $=0$ on several seeds). The
+masked-LM objective, applied to a 107-interview corpus with no
+embedding-preserving term, degrades the very sentence-embedding geometry the head
+pools over: a catastrophic-forgetting failure, not an under-training one.
+Lengthening the masked-LM schedule would be expected to worsen it; reviving DAPT
+would need an embedding-preserving objective (e.g.\ TSDAE or contrastive
+continued pre-training), which we do not pursue.
+
+The pre-registered rule promotes the four configurations within the seed-noise
+band of the best (capped at four) --- \texttt{mxbai} LoRA $r$16,
+\texttt{bge} LoRA $r$16+FFN, \texttt{bge} LoRA $r$8/lr2e-4, and \texttt{last-}4 ---
+plus the frozen control to Stage 2, and carries the rank-1 \texttt{mxbai} LoRA
+$r$16 forward as the single winner for the Stage-3 cross-validation.
+
+\subsection{The leakage-free OOF probe}
+\label{sec:finetune-iter1-oof}
+
+Before the once-only test evaluation, each finalist passes through the Stage-2
+out-of-fold (OOF) probe: a nested $K$-fold over the train+dev pool that gives
+every one of the $N\!=\!142$ subjects a leakage-free probability from a model
+that never trained on it. The probe exists to fix the decision threshold, but it
+is \emph{also} a leakage-free, fourfold-larger-$N$ read on the finalist ranking
+than the $n\!=\!35$ development split, and it is informative on its own.
+\Cref{tab:ft-oof} reports it.
+
+\begin{table}[t]
+\caption{Stage-2 OOF probe (leakage-free, train+dev pool $N\!=\!142$, 42
+positive). \textbf{OOF AUC} with a subject-resampling bootstrap 95\% CI; the
+development and OOF ranks are repeated for contrast (development per-seed AUC in
+\Cref{tab:ft-grid}).}
+\label{tab:ft-oof}
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{OOF AUC} & \textbf{95\% CI} & \textbf{dev rk} & \textbf{OOF rk} \\
+\midrule
+\textbf{frozen (control)}      & \textbf{0.790} & [.709,.866] & 5 & \textbf{1} \\
+last-4                         & 0.789 & [.706,.862] & 4 & 2 \\
+LoRA $r$16+FFN                 & 0.775 & [.687,.851] & 2 & 3 \\
+mxbai LoRA $r$16               & 0.768 & [.685,.843] & \textbf{1} & 4 \\
+LoRA $r$8                      & 0.764 & [.676,.846] & 3 & 5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three points follow, all consistent with the development-grid reading.
+\textbf{(1) The grid ranking does not survive the leakage-free probe.} The
+development rank-1 configuration (\texttt{mxbai} LoRA $r$16) falls to OOF rank~4,
+while \texttt{last-}4 --- development rank~4 --- rises to OOF rank~2; yet every
+pairwise OOF AUC gap lies within bootstrap noise, so the finalists are
+\emph{statistically indistinguishable} at $N\!=\!142$. This is the same
+conclusion the per-seed grid reached --- no single adaptation method is crowned
+--- now corroborated on a leakage-free, larger sample, and it is
+exactly why selection was pre-registered and the test split is spent once.
+\textbf{(2) The development AUC is optimistic.} The leakage-free OOF AUC
+($\approx\!0.76$--$0.79$) sits about $0.13$ below the development figure
+($\approx\!0.91$); test expectations should be calibrated to the OOF band.
+\textbf{(3) Fine-tuning yields no leakage-free OOF lift over the frozen
+control.} Run through the identical OOF probe, the frozen encoder scores the
+\emph{highest} pooled OOF AUC of the set ($0.790$, $95\%$ CI $[.709,.866]$),
+edging the best adaptation arm (\texttt{last-}4, $0.789$). Treating the 15 paired
+per-run AUCs ($5$ fold $\times\,3$ seed, aligned by fold and seed) with a
+Wilcoxon signed-rank test, no fine-tuning finalist differs from frozen: the
+mean per-run gaps are within $\pm0.01$ AUC and the raw $p$-values are
+$0.98$/$0.39$/$0.60$/$0.69$ (\texttt{last-}4/LoRA $r$16+FFN/\texttt{mxbai}/LoRA
+$r$8), all $\approx\!1$ after Holm correction. Every model separates the pooled
+pool far above chance (Mann-Whitney $p<10^{-6}$), but adaptation moves the
+\emph{ranking} no further than frozen does. The grid's apparent $\approx\!+0.02$
+development-AUC lift over the frozen control is therefore a small-$n$ artefact of
+the $n\!=\!35$ dev split; it does not reproduce on the four-fold-larger,
+leakage-free OOF read. This is exactly the kind of optimism the staged protocol
+was built to catch before spending the test split.
+
+\subsection{Official-test and cross-validation results}
+\label{sec:finetune-iter1-test}
+
+The leakage-free OOF probe predicted that the development lift would not survive.
+The two once-only readings --- the official AVEC2017 test split and the
+cross-validation pool --- bear it out.
+
+\paragraph{Official test split.} Each finalist is evaluated once on the official
+test split ($n\!=\!47$, 14 positive) as a 30-seed probability ensemble, with the
+decision threshold fixed by the leakage-free OOF prevalence rule of
+\Cref{sec:finetune-iter1-oof}. The comparison uses two frozen references
+(\Cref{tab:ft-test}). The \emph{apples-to-apples} comparator is the
+\textbf{in-harness frozen control}: the encoder frozen but trained through the
+\emph{same} fine-tuning harness (the shorter, more strongly regularised,
+mixed-precision schedule of \Cref{sec:finetune-iter1}), so that a finalist minus
+this control isolates the effect of \emph{adaptation} alone (per-seed mean AUC
+$0.818$, macro-F1 $0.700$). The \textbf{deployed headline bar} (AUC $0.864$, macro-F1 $0.774$;
+lever~3 of \Cref{tab:levers}) is the frozen model trained with the stronger main
+pipeline of \Cref{sec:internal} --- the system we are trying to beat --- and is
+shown for reference only. The two are \emph{not} numerically comparable, for a
+structural reason: the deployed pipeline keeps the encoder frozen and therefore
+\emph{pre-computes and caches} the sentence embeddings once, so the encoder never
+enters the training graph and the MIL head trains on fixed vectors under the long,
+lightly regularised main schedule. Fine-tuning by definition needs the encoder
+\emph{inside} the training graph (to receive gradients), which forces a different
+regime --- chunked micro-batched encoding with gradient checkpointing and
+mixed-precision embedding, a shorter schedule, stronger regularisation
+($\text{dropout}=0.4$), head warm-up and layer-wise LR decay (\Cref{sec:finetune-iter1}).
+That regime change alone, \emph{with the encoder still frozen}, costs $0.046$ AUC
+($0.864\!\to\!0.818$, deployed bar $\to$ in-harness control); it is a property of
+the training harness, not of adaptation. Subtracting an adaptation arm from the
+deployed bar would therefore confound the adaptation effect with this $0.046$
+harness penalty --- which is precisely why every fine-tuning effect is measured
+against the in-harness frozen control, and the deployed bar is read only as the
+external deployment target.
+
+Read against the in-harness control, the adaptation arms \emph{scatter} around it.
+On per-seed mean AUC, \texttt{last-}4 ($0.850$) and LoRA $r$16+FFN ($0.822$) edge
+the control ($0.818$) while \texttt{mxbai} ($0.812$) and LoRA $r$8 ($0.808$) fall
+below; macro-F1 is equally mixed, the control ($0.700$) sitting mid-pack between
+\texttt{last-}4/\texttt{mxbai} ($0.73$/$0.72$) and LoRA $r$16+FFN/$r$8
+($0.66$/$0.65$). A per-seed paired Wilcoxon signed-rank test against the control
+(30 seed-aligned pairs, the same paired logic as the OOF and CV tests) finds three
+arms indistinguishable from frozen ($p=0.22/0.24/0.90$ for LoRA
+$r$16+FFN/\texttt{mxbai}/LoRA $r$8, two of them nominally \emph{below}) and one ---
+\texttt{last-}4 --- significantly above ($\Delta=+0.032$ AUC, $p<0.001$,
+Holm-significant).
+
+That lone significant arm is exactly the small-sample optimism the staged protocol
+exists to expose, not a real lift, for three reasons. \textbf{(i)} The significance
+is over seeds on a \emph{fixed} 47-subject split; the subject-resampling bootstrap
+CIs are wide ($\approx\!0.25$ span) and overlap completely (\texttt{last-}4
+$[.722,.964]$ vs.\ control $[.686,.936]$), so the edge is not robust to \emph{which}
+subjects are tested --- the two uncertainties answer different questions, and the
+sampling one is not resolved at $n\!=\!47$. \textbf{(ii)} It does not reproduce on
+the four-fold-larger, leakage-free OOF probe, where \texttt{last-}4 ($0.789$) and
+frozen ($0.790$) are statistically tied (Wilcoxon $p=0.98$,
+\Cref{sec:finetune-iter1-oof}): the same arm, the same comparison, no effect at
+$N\!=\!142$. \textbf{(iii)} Even at face value \texttt{last-}4's $0.850$ stays below
+the deployed headline bar ($0.864$). Read against that bar the verdict is
+unambiguous --- \emph{no finalist beats the system we ship}, on AUC or macro-F1.
+The development-grid ordering again fails to transfer: the dev rank-1 model
+(\texttt{mxbai} LoRA $r$16) is fourth of five adaptation arms on the test split,
+while the dev rank-4 \texttt{last-}4 is top --- the same rank inversion the OOF
+probe showed.
+
+\begin{table}[t]
+\caption{Official AVEC2017 test split ($n\!=\!47$, 14 positive), 30-seed
+probability ensemble at the leakage-free OOF prevalence-matched threshold.
+\textbf{AUC} and \textbf{mac-F1} are the 30-seed per-seed mean$\pm$std; the
+\textbf{95\% CI} is a subject-resampling bootstrap of the seed-ensemble AUC over
+the $n\!=\!47$ test subjects (two complementary uncertainties: seed variability and
+test-set sampling). The \textbf{in-harness frozen control} is the frozen encoder
+trained through the same fine-tuning harness; the \textbf{deployed bar} reproduces
+the headline figures of \Cref{tab:external,tab:levers}. Adaptation arms ordered by
+per-seed mean AUC; development rank repeated for contrast.}
+\label{tab:ft-test}
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{AUC} & \textbf{95\% CI} & \textbf{mac-F1} & \textbf{dev rk} \\
+\midrule
+deployed bar (headline)        & \textbf{0.864}{\footnotesize$\pm$.011} & [.751,.963] & \textbf{0.774}{\footnotesize$\pm$.029} & --- \\
+\midrule
+last-4, lr1e-5                 & 0.850{\footnotesize$\pm$.012} & [.722,.964] & 0.726{\footnotesize$\pm$.029} & 4 \\
+LoRA $r$16+FFN, lr1e-4         & 0.822{\footnotesize$\pm$.051} & [.706,.959] & 0.663{\footnotesize$\pm$.145} & 2 \\
+\textit{frozen control (in-harness)} & \textit{0.818}{\footnotesize$\pm$.012} & [.686,.936] & \textit{0.700}{\footnotesize$\pm$.058} & 5 \\
+mxbai LoRA $r$16, lr1e-4       & 0.812{\footnotesize$\pm$.024} & [.676,.933] & 0.718{\footnotesize$\pm$.087} & 1 \\
+LoRA $r$8, lr2e-4              & 0.808{\footnotesize$\pm$.060} & [.708,.953] & 0.649{\footnotesize$\pm$.139} & 3 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\paragraph{Cross-validation.} Stage~3 re-evaluates the single winner
+(\texttt{mxbai} LoRA $r$16, carried forward as the nominal dev rank-1) against the
+frozen control under repeated $K$-fold cross-validation on the train+dev pool, all
+adaptation performed inside each fold (\Cref{tab:ft-cv}). Over the 50 paired
+per-run AUCs (2 repeats $\times\,5$ fold $\times\,5$ seed, aligned by repeat, fold,
+and seed), the winner and frozen are indistinguishable on AUC ($0.777$ vs.\ $0.778$;
+Wilcoxon $p=0.79$) and frozen is nominally ahead on macro-F1 ($0.679$ vs.\ $0.657$;
+$p=0.12$, n.s.). Monte-Carlo cross-validation, run for both arms,
+\emph{flips the sign} of the nominal gap --- the winner
+edges frozen on MC (per-run AUC $0.824$ vs.\ $0.803$, $\Delta\!=\!+0.021$,
+$p=0.35$; macro-F1 $0.694$ vs.\ $0.667$, $\Delta\!=\!+0.026$, $p=0.47$) having
+trailed it on $K$-fold --- but neither gap is significant, and a lift that
+reverses direction between two cross-validation schemes is noise, not signal.
+
+\begin{table}[t]
+\caption{Stage-3 cross-validation (train+dev pool), winner (\texttt{mxbai} LoRA
+$r$16) vs.\ the in-harness frozen control, adaptation inside each fold. Repeated
+$K$-fold is $2$ repeat $\times\,5$ fold $\times\,5$ seed $=50$ per-run
+evaluations; Monte-Carlo is $25$ per-run. Per-run mean$\pm$std and the
+fold-ensemble.}
+\label{tab:ft-cv}
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+ & & \multicolumn{2}{c}{\textbf{per-run AUC}} & \multicolumn{2}{c}{\textbf{per-run mac-F1}} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+\textbf{Scheme} & \textbf{Model} & \textbf{run} & \textbf{ens.} & \textbf{run} & \textbf{ens.} \\
+\midrule
+$K$-fold & frozen        & \textbf{0.778}{\footnotesize$\pm$.11} & 0.80 & \textbf{0.679}{\footnotesize$\pm$.14} & 0.72 \\
+$K$-fold & winner        & 0.777{\footnotesize$\pm$.11} & 0.80 & 0.657{\footnotesize$\pm$.11} & 0.67 \\
+\midrule
+MC       & frozen        & 0.803{\footnotesize$\pm$.09} & 0.843 & 0.667{\footnotesize$\pm$.12} & 0.732 \\
+MC       & winner        & \textbf{0.824}{\footnotesize$\pm$.09} & \textbf{0.847} & \textbf{0.694}{\footnotesize$\pm$.13} & \textbf{0.749} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Verdict.} Three independent leakage-free readings agree that encoder
+fine-tuning yields \emph{no reliable lift} over the frozen baseline for this task at
+this scale:
+\begin{itemize}
+  \item \textbf{OOF probe ($N\!=\!142$, decisive).} The frozen control scores
+        \emph{first}, Wilcoxon n.s.\ against every finalist.
+  \item \textbf{Cross-validation pool (decisive).} Winner and frozen are
+        indistinguishable, with a nominal gap that \emph{flips sign} between the
+        $K$-fold and Monte-Carlo schemes.
+  \item \textbf{Official test ($n\!=\!47$, underpowered).} Adaptation arms scatter
+        on both sides of the in-harness frozen control within overlapping
+        $\approx\!0.25$-span subject-bootstrap CIs. The one arm that separates
+        per-seed (\texttt{last-}4, $p<0.001$) ties frozen on the four-fold-larger
+        leakage-free OOF ($p=0.98$) --- small-sample optimism, not a transferable
+        gain. No finalist clears the deployed headline bar.
+\end{itemize}
+The $\approx\!+0.02$ AUC advantage on the $n\!=\!35$ development grid was a
+small-sample artefact; it does not survive any larger, leakage-free sample, and the
+dev ranking among adaptation methods never transfers (the dev rank-1 \texttt{mxbai}
+LoRA $r$16 is the worst finalist at test). The pre-registered, staged protocol did
+exactly what it was designed to do: it exposed the development optimism \emph{before}
+the test split was spent, and prevents us from over-claiming a parameter-efficient
+fine-tuning win that the data does not support. We therefore retain the frozen
+encoder as the deployed system; the remaining headroom (\Cref{tab:levers}) is not
+recoverable by fine-tuning the sentence encoder on a 107-interview corpus.
 
 \section{Cross-Corpus Generalization: Zero-Shot Transfer to E-DAIC}
 \label{sec:edaic}
@@ -1261,7 +1612,7 @@ circularly choose, the better generalizer.
 
 We report the threshold-free ROC-AUC and PR-AUC as the primary transfer numbers:
 a decision threshold cannot be tuned on the target without leaking it, and the
-source threshold is mis-calibrated under domain shift (below).
+source threshold is mis-calibrated under domain shift.
 
 \subsection{Result: the model transfers, and order-free pooling transfers best}
 \label{sec:edaic-result}
@@ -1328,13 +1679,10 @@ validated across corpora, not on a single development split.
 
 \section{Discussion and Limitations}
 
-The results support a narrow but solid claim: under a fixed, leakage-free
-protocol, a single TC-MIL network beats the cleanest validity-checked baseline
-significantly on three F1 variants and on AUC, and is on par (within seed
-variation) with the strongest reported text-only single model on the DAIC-WOZ
-official test split --- while additionally reporting a threshold-free AUC, an
-explicit interviewer-prompt bias control, and a faithfulness analysis that the
-prior single-model entries do not. The improvement is attributable to the
+The results support a narrow but solid claim: a single TC-MIL network beats the
+cleanest validity-checked baseline significantly on three F1 variants and on AUC,
+and is on par (within seed variation) with the strongest reported text-only single
+model on the official test split. The improvement is attributable to the
 dialogue-chunk representation (the architecture ladder) and to one
 calibration-level change (the class weight).
 
