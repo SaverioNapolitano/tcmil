@@ -489,12 +489,25 @@ def run_official(args, device, log, out_dir):
         test_avg = np.mean(test_runs, axis=0)
         results["test_probs"] = test_avg.tolist()
         results["test_labels"] = np.asarray(test_labels).tolist()
+        # Persist the per-seed test predictions and metrics so the official-test
+        # table can report a per-seed mean+/-std AUC (matching tab:external/
+        # tab:levers), not only the ensemble. test_prob_runs is the canonical
+        # primitive (any per-seed metric is recomputable at any threshold);
+        # test_per_seed metrics use the prevalence threshold for convenience.
+        results["test_prob_runs"] = [tp.tolist() for tp in test_runs]
+        pst = strategies.get("oof_prevalence") or strategies["prevalence"]
+        results["test_per_seed"] = [
+            compute_metrics(test_labels, (tp >= pst).astype(int), tp)
+            for tp in test_runs]
+        seed_test_aucs = [m["roc_auc"] for m in results["test_per_seed"]]
         results["test_by_strategy"] = {}
         for name, t in strategies.items():
             tm = compute_metrics(test_labels, (test_avg >= t).astype(int), test_avg)
             results["test_by_strategy"][name] = {"threshold": float(t), **tm}
             log.info(f"TEST [{name}] (t={t:.2f}): F1={tm['f1']:.4f} "
                      f"P={tm['precision']:.4f} R={tm['recall']:.4f} AUC={tm['roc_auc']:.4f}")
+        log.info(f"TEST per-seed AUC {np.mean(seed_test_aucs):.4f}"
+                 f"+/-{np.std(seed_test_aucs):.4f}")
     return results
 
 

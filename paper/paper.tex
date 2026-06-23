@@ -123,7 +123,7 @@ showed can be exploited to reach macro-F1 0.90 by feeding the model the
 therapist's mental-health questions. A method that is not measured under a
 fixed, leakage-free protocol cannot be compared on equal terms with the literature.
 
-\textbf{Contributions.} This paper makes the following contributions.
+\textbf{Contributions.} This paper makes three contributions.
 \begin{enumerate}
 \item \textbf{TC-MIL}, a topic-chunk MIL model whose instances are short
 sliding windows of dialogue rather than single turns. The chunk restores the
@@ -131,23 +131,19 @@ topical context (a question about sleep and the answer to it) that PHQ-8
 symptoms attach to, turning near-degenerate instances into discriminative
 ones (\Cref{sec:method}).
 \item A \textbf{leakage-free evaluation protocol} on the official AVEC2017
-split with per-seed mean$\pm$std reporting, a-priori prevalence thresholds, and
-a single test evaluation, together with non-parametric and parametric
-significance testing (\Cref{sec:protocol}).
-\item An \textbf{external comparison} showing that a single TC-MIL network
-significantly beats the cleanest validity-checked text-only baseline on
-positive-, macro- and micro-F1 and on AUC, and matches the strongest reported
-text-only single model within seed variation
-(\Cref{sec:external}).
-\item An \textbf{architecture ablation and a single-lever study} that localise
-the improvement in the chunk representation and in the removal of a
-recall-biasing class weight, under the identical protocol
-(\Cref{sec:ablation}).
-\item An \textbf{internal cross-validation} that corroborates the ranking on
-the training pool with matched-fold significance tests
-(\Cref{sec:internal}), and a \textbf{quantified interpretability
-analysis} of attention faithfulness, the clinical symptom read-out, and the
-interviewer-prompt bias probes (\Cref{sec:interpret}).
+split --- per-seed mean$\pm$std over 30 seeds, a-priori prevalence thresholds, a
+single test evaluation, and non-parametric and parametric significance testing
+--- under which a single TC-MIL network beats the cleanest validity-checked
+text-only baseline on positive-, macro- and micro-F1 and on AUC, and matches the
+strongest reported text-only single model within seed variation
+(\Cref{sec:protocol,sec:external}).
+\item \textbf{Extensive validation} under that protocol: an architecture
+ablation and single-lever study that localise the gain in the chunk
+representation and the removal of a recall-biasing class weight, an internal
+cross-validation that corroborates the ranking, and a quantified
+interpretability analysis of attention faithfulness, the clinical symptom
+read-out, and the interviewer-prompt bias probes
+(\Cref{sec:ablation,sec:internal,sec:interpret}).
 \end{enumerate}
 
 \section{Related Work and Baseline Selection}
@@ -156,10 +152,10 @@ interviewer-prompt bias probes (\Cref{sec:interpret}).
 A central difficulty in positioning a DAIC-WOZ result is that many headline
 numbers are not directly comparable: they are measured on the development set, on a
 non-standard split, on a different modality, or with the interviewer-prompt
-shortcut left uncontrolled. We therefore treat baseline selection as a
-verification problem and admit a competitor only if its number is on the
-held-out test set, text-only, and outside the interviewer-prompt-inflated
-regime identified by \cite{burdisso2024}.
+shortcut left uncontrolled. We therefore organise this section around a validity
+filter, comparing primarily against results that are on the held-out test set,
+text-only, and outside the interviewer-prompt-inflated regime identified by
+\cite{burdisso2024}.
 
 \textbf{The validity filter.} \cite{burdisso2024} demonstrate
 that including the interviewer's (``Ellie'') prompts inflates DAIC-WOZ scores
@@ -189,8 +185,8 @@ in the literature are both test-set and text-only single models. Beyond
 \cite{mallolragolta2019} (positive-class F1 0.63), the affective HAN of
 \cite{xezonaki20_interspeech} (macro-F1 0.70), and the Bi-LSTM with self-attention
 of \cite{10006532} (macro-F1 0.78 with interviewer prompts, 0.72 participant-only).
-The honest standing of this paper is therefore that we lead the cleanest
-\emph{verified single-model} test-set baseline \cite{milintsevich2023} and match
+This paper therefore leads the cleanest
+\emph{verified single-model} test-set baseline \cite{milintsevich2023} and matches
 the best reported text-only single model within seed variation
 (\Cref{sec:external}).
 
@@ -269,10 +265,10 @@ exchanges and stride $s$, rendering each window as plain dialogue text. With
 $w=4,\ s=2$ this yields on the order of 28 instances per interview, each
 $\approx$65 words, so a window contains a question and its answer ---
 ``how have you been sleeping?'' together with the response --- restoring the
-context that a single backchanneled turn lacks (\Cref{fig:chunk}). This is the
-most important design choice in the model: in development ablations, widening
-the window from 2 to 4--6 exchanges is what separates an effective model from an
-ineffective one.
+context that a single backchanneled turn lacks (\Cref{fig:chunk}). Our
+development ablations indicate this is the most influential design choice:
+widening the window from 2 to 4--6 exchanges is what separates an effective model
+from an ineffective one.
 
 \begin{figure}[t]
 \centering
@@ -317,9 +313,9 @@ cheap and reproducible.
 A small projector reduces the chunk embeddings, an optional one-layer
 bidirectional GRU (residual) lets each chunk see its conversational
 neighbourhood, and a gated-attention pooling layer \cite{ilse2018} produces a
-single bag vector as an attention-weighted sum of instances. The GRU is the
-second most important component after chunking, adding 0.02--0.03 development
-AUC across encoders; a transformer context was unstable at this sample size, so
+single bag vector as an attention-weighted sum of instances. In our ablations the
+GRU is the next most influential component after chunking, adding 0.02--0.03
+development AUC across encoders; a transformer context was unstable at this sample size, so
 the recurrent inductive bias is preferred. The whole head is on the order of
 $10^5$ parameters and uses none of the mixup, focal, SWA, or diversity losses
 of the prior family.
@@ -422,34 +418,36 @@ Agarwal multi-view \cite{agarwal2024} (2024) & -- & -- & 0.80 & 0.83 & -- \\
 The single TC-MIL network significantly exceeds \cite{milintsevich2023} on the
 metrics that work reports: micro-F1 0.814 vs.\ 0.766 and macro-F1 0.774 vs.\
 0.739 (one-sample $t$ over 30 seeds, $p=3.8\!\times\!10^{-7}$), and it adds a
-threshold-free AUC of 0.864 that the baseline does not report. The strongest
-prior text-only single model is the multi-view network of \cite{agarwal2024},
-which reports a single-run test macro-F1 of 0.80 on the same split; our 30-seed
-mean $0.774\pm0.029$ places that value within about one standard deviation, so on
-macro-F1 the two are statistically indistinguishable under seed variation, while
-\cite{agarwal2024} reports a single run without an AUC, a micro-F1, an
-interviewer-prompt bias control, or a subject-level interval. The Bi-LSTM with
-self-attention of \cite{10006532} reports a slightly higher test macro-F1 of
-$0.7834$, but that figure is its dialogue setting that ingests the interviewer's
-questions --- exactly the prompt shortcut we control for (\Cref{sec:interpret})
---- and its participant-only setting falls to $0.7235$; like \cite{agarwal2024} it
-is a single run with no AUC, micro-F1, or subject-level interval, so it too sits
-within one seed standard deviation of our $0.774\pm0.029$. On UAR
-(\Cref{tab:external}) the picture is consistent: our $0.77\pm0.03$ exceeds
+threshold-free AUC of 0.864 that the baseline does not report.
+
+Two single-run results report a higher macro-F1. The strongest prior text-only
+single model is the multi-view network of \cite{agarwal2024}, which reports a
+single-run test macro-F1 of 0.80 on the same split; our 30-seed mean
+$0.774\pm0.029$ places that value within about one standard deviation, so on
+macro-F1 the two are statistically indistinguishable under seed variation. The
+Bi-LSTM with self-attention of \cite{10006532} reports $0.7834$, but that is its
+dialogue setting that ingests the interviewer's questions --- the prompt shortcut
+we control for (\Cref{sec:interpret}) --- and its participant-only setting falls to
+$0.7235$; it too sits within one seed standard deviation of $0.774\pm0.029$. Both
+are single runs without an AUC, a micro-F1, an interviewer-prompt bias control, or
+a subject-level interval.
+
+On UAR (\Cref{tab:external}) the picture is consistent: our $0.77\pm0.03$ exceeds
 \cite{mallolragolta2019} ($0.66$), \cite{xezonaki20_interspeech} ($0.70$) and
 \cite{agarwal2022mv} ($0.7232$), and sits within one seed standard deviation of
 the Bi-LSTM ($0.7857$, unchanged across its dialogue and participant-only
-settings); \cite{agarwal2024} reports a higher single-run UAR of $0.83$, but
-that point falls inside our subject-level bootstrap interval $[0.59, 0.92]$, so
-on 47 test subjects the difference is not resolvable. TC-MIL thus matches
-the best prior text-only single model on macro-F1, is competitive on UAR, and
-additionally supplies a threshold-free AUC (0.864), micro-F1 (0.814), an
-explicit bias control (\Cref{sec:interpret}), a per-chunk faithfulness analysis,
-and 30-seed plus bootstrap uncertainty. The subject-level bootstrap intervals for the
-headline operating point are wide (ROC-AUC $[0.751, 0.963]$, macro-F1
-$[0.591, 0.898]$ over 2000 resamples of the 47 test subjects, \Cref{tab:external});
-every DAIC-WOZ test number carries this uncertainty, and we report it as an
-integral part of the protocol.
+settings); \cite{agarwal2024} reports a higher single-run UAR of $0.83$, but that
+point falls inside our subject-level bootstrap interval $[0.59, 0.92]$, so on 47
+test subjects the difference is not resolvable.
+
+In sum, TC-MIL matches the best prior text-only single model on macro-F1 and is
+competitive on UAR. Beyond the point estimates it supplies a threshold-free AUC
+(0.864), micro-F1 (0.814), an explicit bias control, a per-chunk faithfulness
+analysis, and 30-seed plus bootstrap uncertainty. The subject-level bootstrap
+intervals for the headline operating point are wide (ROC-AUC $[0.751, 0.963]$,
+macro-F1 $[0.591, 0.898]$ over 2000 resamples of the 47 test subjects,
+\Cref{tab:external}); every DAIC-WOZ test number carries this uncertainty, and we
+report it as an integral part of the protocol.
 
 \section{Finding the Best Model: Ablations}
 \label{sec:ablation}
@@ -641,15 +639,10 @@ final recipe is therefore the base model with $pos\_weight=1.0$.
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{fig_calibration.pdf}
-\caption{Why $pos\_weight=1.0$ helps is calibration, not ranking (seed-averaged
+\caption{$pos\_weight=1.0$ helps via calibration, not ranking (seed-averaged
 test probabilities). \textbf{(a)} threshold $\to$ macro-F1: circles mark each
-model's oracle, crosses its a-priori prevalence operating threshold. With
-$pos\_weight=$auto the recall-skewed probabilities place the operating threshold
-well below the oracle; $pos\_weight=1.0$ shifts the curve so the same prevalence
-threshold lands at the peak. \textbf{(b)} reliability diagram (5 quantile bins):
-the auto model departs from the diagonal, $pos\_weight=1.0$ tracks it more
-closely. ROC-AUC is essentially unchanged (0.864), confirming the gain is in the
-decision, not the ranking.}
+model's oracle threshold, crosses its a-priori prevalence operating threshold.
+\textbf{(b)} reliability diagram (5 quantile bins).}
 \label{fig:calib}
 \end{figure}
 
@@ -732,15 +725,13 @@ $0.792\!\pm\!.034$ / $0.796\!\pm\!.035$), while smaller or causal/weaker encoder
 \Cref{tab:levers}. Second, on the development set the
 GRU temporal head is far ahead of plain pooling (0.792 vs.\ 0.645); this is the
 \emph{opposite} of the official-test single-model result (\Cref{sec:external}),
-where the plain head generalised best. We report both rather than hide the
-disagreement. We nonetheless fix the plain head as the single-model default
-\emph{a priori}, independently of this dev signal and of the test set: it is the
-only pooling whose per-chunk attribution is faithful
-(\Cref{sec:interpret}), which is a core requirement of our claim.
+where the plain head generalised best. We report both signals. We fix the plain
+head as the single-model default \emph{a priori}, independently of this dev signal
+and of the test set: it is the only pooling whose per-chunk attribution is faithful
+(\Cref{sec:interpret}), a core requirement of our claim.
 The GRU head, which forgoes that faithfulness, is therefore not adopted as the
-headline model. The official test --- evaluated
-once, never as a selection signal --- then independently confirms that the plain
-head also generalises best. Third, granularity and
+headline model. The held-out official test then independently confirms that the
+plain head also generalises best. Third, granularity and
 regularisation are flat (dev macro-F1 0.73--0.82): $w4/s2$ matches the larger
 $w6/s3$, and dropout, projection width and auxiliary weight barely move the
 score. The auxiliary symptom loss can even be dropped with no dev cost, but we
@@ -821,7 +812,7 @@ role-aware DAMIL-R and MH. The Monte Carlo
 differences are robustly significant across all three primary metrics (Wilcoxon
 and paired $t$, $p<0.05$, down to $p<10^{-3}$ vs.\ the flat baselines); the
 $K$-Fold differences over the role-aware models are smaller and not always
-significant at $n=15$ matched runs, which we report without over-interpreting.
+significant at $n=15$ matched runs.
 The pattern is consistent with the ladder: TC-MIL's largest and most
 significant margins are on the official split and the Monte Carlo internal
 split, and the model leads on every protocol \emph{headline} even where a
@@ -1070,16 +1061,11 @@ faithful single-chunk explanation.
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{fig3_faithfulness.pdf}
-\caption{Real per-chunk faithfulness, test split, $pos\_weight\!=\!1.0$. Each
+\caption{Per-chunk faithfulness, test split, $pos\_weight\!=\!1.0$. Each
 point is one dialogue chunk; axes are within-interview percentile ranks of the
 attention weight ($x$) and the leave-one-out $\Delta$probability ($y$); the red
-dashed line is the perfectly-faithful diagonal. \textbf{(a)} The plain
-attention-MIL head pools linearly, so occlusion tracks attention exactly
-($\rho=+0.99$) --- faithful but near-uniform, hence uninformative. \textbf{(b)}
-The GRU temporal head makes attention selective but its per-chunk
-attention$\leftrightarrow$occlusion rank correlation is negative
-($\rho=-0.28$): the most-attended chunk is not the most influential one.
-Faithfulness is a property of the pooling, not of attention \emph{per se}.}
+dashed line is the perfectly-faithful diagonal. \textbf{(a)} Plain attention-MIL
+head ($\rho=+0.99$). \textbf{(b)} GRU temporal head ($\rho=-0.28$).}
 \label{fig:faith}
 \end{figure}
 
@@ -1237,7 +1223,7 @@ improvement and the faithfulness behaviour as separate, independent findings.
 \label{sec:edaic}
 
 Every result so far is within DAIC-WOZ: train, select, and test on disjoint
-splits of one corpus. The sterner question for a clinical screen is whether the
+splits of one corpus. A more stringent question for a clinical screen is whether the
 model transfers to a \emph{different} corpus it never saw --- a different cohort,
 a different ASR front end, a different recording protocol. We test this directly
 and \emph{zero-shot}: the DAIC-WOZ model is frozen and run, with no adaptation
@@ -1369,8 +1355,8 @@ single model within seed variation. Ablations
 localise the gain in the dialogue-chunk representation and in the removal of a
 recall-biasing class weight; cross-validation corroborates the ranking
 internally; and a quantified interpretability study shows the model is stable,
-clinically grounded, and free of the interviewer-prompt shortcut, while being
-honest that its attention is not a faithful per-instance saliency. The source
+clinically grounded, and free of the interviewer-prompt shortcut, while
+transparently reporting that its attention is not a faithful per-instance saliency. The source
 code and the trained network weights are available at
 \url{https://github.com/SaverioNapolitano/tcmil} to ensure reproducibility.
 

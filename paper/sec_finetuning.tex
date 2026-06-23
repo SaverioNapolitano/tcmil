@@ -3,8 +3,9 @@
 %   \input{sec_finetuning}
 % placed AFTER \section{Internal Comparison: Cross-Validation}
 % (\label{sec:internal}) and BEFORE \section{Discussion and Limitations}.
-% Iteration 1 is complete on the development grid; the official-test and
-% cross-validation blocks marked %TODO are filled once cluster jobs 3/4 land.
+% Complete: dev grid (Stage 1), OOF probe (Stage 2), official test + CV
+% (Stage 3). Official test now carries the in-harness frozen control
+% (results/ft/official_frozen_ctrl) as the apples-to-apples comparator.
 % =====================================================================
 \section{Does Fine-Tuning the Encoder Help?}
 \label{sec:finetune}
@@ -199,32 +200,77 @@ was built to catch before spending the test split.
 
 The leakage-free OOF probe predicted that the development lift would not survive.
 The two once-only readings --- the official AVEC2017 test split and the
-cross-validation pool --- confirm it.
+cross-validation pool --- bear it out.
 
 \paragraph{Official test split.} Each finalist is evaluated once on the official
 test split ($n\!=\!47$, 14 positive) as a 30-seed probability ensemble, with the
 decision threshold fixed by the leakage-free OOF prevalence rule of
-\Cref{sec:finetune-iter1-oof}; \Cref{tab:ft-test} reports the result against the
-frozen single-model bar (AUC $0.864$, macro-F1 $0.774$; lever~3 of
-\Cref{tab:levers}). \emph{No fine-tuning finalist beats the frozen bar.} The best
-ROC-AUC --- \texttt{last-}4 at $0.857$ --- still sits below frozen, and the
-remaining three span $0.816$--$0.846$; every macro-F1 ($0.743$--$0.763$) is below
-the frozen $0.774$. The comparison is in fact conservative against frozen: these
-are 30-seed \emph{ensemble} predictions, yet they fail to clear a \emph{single}
-frozen model. Each AUC bootstrap CI is wide ($\approx\!0.24$ span at $n\!=\!47$)
-and contains the frozen bar, so no finalist is \emph{distinguishable} from frozen
-either way --- the honest reading is a null, not a regression. The
-development-grid ordering again fails to transfer: the dev rank-1 model
-(\texttt{mxbai} LoRA $r$16) posts the \emph{lowest} test AUC ($0.816$), while the
-dev rank-4 \texttt{last-}4 posts the highest --- the same rank inversion the OOF
-probe showed, now reproduced on the test split.
+\Cref{sec:finetune-iter1-oof}. The comparison uses two frozen references
+(\Cref{tab:ft-test}). The \emph{apples-to-apples} comparator is the
+\textbf{in-harness frozen control}: the encoder frozen but trained through the
+\emph{same} fine-tuning harness (the shorter, more strongly regularised,
+mixed-precision schedule of \Cref{sec:finetune-iter1}), so that a finalist minus
+this control isolates the effect of \emph{adaptation} alone (per-seed mean AUC
+$0.818$, macro-F1 $0.700$). The \textbf{deployed headline bar} (AUC $0.864$, macro-F1 $0.774$;
+lever~3 of \Cref{tab:levers}) is the frozen model trained with the stronger main
+pipeline of \Cref{sec:internal} --- the system we are trying to beat --- and is
+shown for reference only. The two are \emph{not} numerically comparable, for a
+structural reason: the deployed pipeline keeps the encoder frozen and therefore
+\emph{pre-computes and caches} the sentence embeddings once, so the encoder never
+enters the training graph and the MIL head trains on fixed vectors under the long,
+lightly regularised main schedule. Fine-tuning by definition needs the encoder
+\emph{inside} the training graph (to receive gradients), which forces a different
+regime --- chunked micro-batched encoding with gradient checkpointing and
+mixed-precision embedding, a shorter schedule, stronger regularisation
+($\text{dropout}=0.4$), head warm-up and layer-wise LR decay (\Cref{sec:finetune-iter1}).
+That regime change alone, \emph{with the encoder still frozen}, costs $0.046$ AUC
+($0.864\!\to\!0.818$, deployed bar $\to$ in-harness control); it is a property of
+the training harness, not of adaptation. Subtracting an adaptation arm from the
+deployed bar would therefore confound the adaptation effect with this $0.046$
+harness penalty --- which is precisely why every fine-tuning effect is measured
+against the in-harness frozen control, and the deployed bar is read only as the
+external deployment target.
+
+Read against the in-harness control, the adaptation arms \emph{scatter} around it.
+On per-seed mean AUC, \texttt{last-}4 ($0.850$) and LoRA $r$16+FFN ($0.822$) edge
+the control ($0.818$) while \texttt{mxbai} ($0.812$) and LoRA $r$8 ($0.808$) fall
+below; macro-F1 is equally mixed, the control ($0.700$) sitting mid-pack between
+\texttt{last-}4/\texttt{mxbai} ($0.73$/$0.72$) and LoRA $r$16+FFN/$r$8
+($0.66$/$0.65$). A per-seed paired Wilcoxon signed-rank test against the control
+(30 seed-aligned pairs, the same paired logic as the OOF and CV tests) finds three
+arms indistinguishable from frozen ($p=0.22/0.24/0.90$ for LoRA
+$r$16+FFN/\texttt{mxbai}/LoRA $r$8, two of them nominally \emph{below}) and one ---
+\texttt{last-}4 --- significantly above ($\Delta=+0.032$ AUC, $p<0.001$,
+Holm-significant).
+
+That lone significant arm is exactly the small-sample optimism the staged protocol
+exists to expose, not a real lift, for three reasons. \textbf{(i)} The significance
+is over seeds on a \emph{fixed} 47-subject split; the subject-resampling bootstrap
+CIs are wide ($\approx\!0.25$ span) and overlap completely (\texttt{last-}4
+$[.722,.964]$ vs.\ control $[.686,.936]$), so the edge is not robust to \emph{which}
+subjects are tested --- the two uncertainties answer different questions, and the
+sampling one is not resolved at $n\!=\!47$. \textbf{(ii)} It does not reproduce on
+the four-fold-larger, leakage-free OOF probe, where \texttt{last-}4 ($0.789$) and
+frozen ($0.790$) are statistically tied (Wilcoxon $p=0.98$,
+\Cref{sec:finetune-iter1-oof}): the same arm, the same comparison, no effect at
+$N\!=\!142$. \textbf{(iii)} Even at face value \texttt{last-}4's $0.850$ stays below
+the deployed headline bar ($0.864$). Read against that bar the verdict is
+unambiguous --- \emph{no finalist beats the system we ship}, on AUC or macro-F1.
+The development-grid ordering again fails to transfer: the dev rank-1 model
+(\texttt{mxbai} LoRA $r$16) is fourth of five adaptation arms on the test split,
+while the dev rank-4 \texttt{last-}4 is top --- the same rank inversion the OOF
+probe showed.
 
 \begin{table}[t]
 \caption{Official AVEC2017 test split ($n\!=\!47$, 14 positive), 30-seed
 probability ensemble at the leakage-free OOF prevalence-matched threshold.
-\textbf{AUC} carries a subject-resampling bootstrap 95\% CI. Top row is the frozen
-single-model bar (AUC $0.864$, macro-F1 $0.774$). Rows ordered by test AUC; the
-development rank is repeated for contrast.}
+\textbf{AUC} and \textbf{mac-F1} are the 30-seed per-seed mean$\pm$std; the
+\textbf{95\% CI} is a subject-resampling bootstrap of the seed-ensemble AUC over
+the $n\!=\!47$ test subjects (two complementary uncertainties: seed variability and
+test-set sampling). The \textbf{in-harness frozen control} is the frozen encoder
+trained through the same fine-tuning harness; the \textbf{deployed bar} reproduces
+the headline figures of \Cref{tab:external,tab:levers}. Adaptation arms ordered by
+per-seed mean AUC; development rank repeated for contrast.}
 \label{tab:ft-test}
 \centering\small
 \setlength{\tabcolsep}{4pt}
@@ -232,11 +278,13 @@ development rank is repeated for contrast.}
 \toprule
 \textbf{Model} & \textbf{AUC} & \textbf{95\% CI} & \textbf{mac-F1} & \textbf{dev rk} \\
 \midrule
-frozen (bar)                   & \textbf{0.864} & --- & \textbf{0.774} & --- \\
-last-4, lr1e-5                 & 0.857 & [.722,.964] & 0.743 & 4 \\
-LoRA $r$16+FFN, lr1e-4         & 0.846 & [.706,.959] & 0.743 & 2 \\
-LoRA $r$8, lr2e-4              & 0.844 & [.708,.953] & 0.743 & 3 \\
-mxbai LoRA $r$16, lr1e-4       & 0.816 & [.676,.933] & 0.763 & 1 \\
+deployed bar (headline)        & \textbf{0.864}{\footnotesize$\pm$.011} & [.751,.963] & \textbf{0.774}{\footnotesize$\pm$.029} & --- \\
+\midrule
+last-4, lr1e-5                 & 0.850{\footnotesize$\pm$.012} & [.722,.964] & 0.726{\footnotesize$\pm$.029} & 4 \\
+LoRA $r$16+FFN, lr1e-4         & 0.822{\footnotesize$\pm$.051} & [.706,.959] & 0.663{\footnotesize$\pm$.145} & 2 \\
+\textit{frozen control (in-harness)} & \textit{0.818}{\footnotesize$\pm$.012} & [.686,.936] & \textit{0.700}{\footnotesize$\pm$.058} & 5 \\
+mxbai LoRA $r$16, lr1e-4       & 0.812{\footnotesize$\pm$.024} & [.676,.933] & 0.718{\footnotesize$\pm$.087} & 1 \\
+LoRA $r$8, lr2e-4              & 0.808{\footnotesize$\pm$.060} & [.708,.953] & 0.649{\footnotesize$\pm$.139} & 3 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -279,16 +327,28 @@ MC       & winner        & \textbf{0.824}{\footnotesize$\pm$.09} & \textbf{0.847
 \end{tabular}
 \end{table}
 
-\paragraph{Verdict.} Three independent leakage-free readings --- the
-$N\!=\!142$ OOF probe, the once-only $n\!=\!47$ test split, and the repeated
-cross-validation pool --- agree: encoder fine-tuning yields \emph{no} lift over the
-frozen baseline for this task at this scale. The $\approx\!+0.02$ AUC advantage on
-the $n\!=\!35$ development grid was a small-sample artefact; it vanishes the moment
-it is measured on a larger, leakage-free sample, and the dev ranking among
-adaptation methods never transfers (the dev rank-1 \texttt{mxbai} LoRA $r$16 is the
-worst finalist at test). The pre-registered, staged protocol did exactly what it
-was designed to do: it exposed the development optimism \emph{before} the test
-split was spent, and prevents us from over-claiming a parameter-efficient
+\paragraph{Verdict.} Three independent leakage-free readings agree that encoder
+fine-tuning yields \emph{no reliable lift} over the frozen baseline for this task at
+this scale:
+\begin{itemize}
+  \item \textbf{OOF probe ($N\!=\!142$, decisive).} The frozen control scores
+        \emph{first}, Wilcoxon n.s.\ against every finalist.
+  \item \textbf{Cross-validation pool (decisive).} Winner and frozen are
+        indistinguishable, with a nominal gap that \emph{flips sign} between the
+        $K$-fold and Monte-Carlo schemes.
+  \item \textbf{Official test ($n\!=\!47$, underpowered).} Adaptation arms scatter
+        on both sides of the in-harness frozen control within overlapping
+        $\approx\!0.25$-span subject-bootstrap CIs. The one arm that separates
+        per-seed (\texttt{last-}4, $p<0.001$) ties frozen on the four-fold-larger
+        leakage-free OOF ($p=0.98$) --- small-sample optimism, not a transferable
+        gain. No finalist clears the deployed headline bar.
+\end{itemize}
+The $\approx\!+0.02$ AUC advantage on the $n\!=\!35$ development grid was a
+small-sample artefact; it does not survive any larger, leakage-free sample, and the
+dev ranking among adaptation methods never transfers (the dev rank-1 \texttt{mxbai}
+LoRA $r$16 is the worst finalist at test). The pre-registered, staged protocol did
+exactly what it was designed to do: it exposed the development optimism \emph{before}
+the test split was spent, and prevents us from over-claiming a parameter-efficient
 fine-tuning win that the data does not support. We therefore retain the frozen
 encoder as the deployed system; the remaining headroom (\Cref{tab:levers}) is not
 recoverable by fine-tuning the sentence encoder on a 107-interview corpus.
