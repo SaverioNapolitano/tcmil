@@ -106,8 +106,8 @@ problems that make reported numbers hard to trust and harder to compare.
 participant turn as the unit of classification or of Multiple-Instance
 Learning (MIL). The majority of DAIC-WOZ turns are short backchannels
 (``yeah'', ``mhm'', ``i don't know''); a frozen sentence encoder maps these to
-near-identical vectors, so no pooling mechanism, however elaborate, can recover
-a signal the instances do not carry. We observed this ceiling directly across
+near-identical vectors, so pooling cannot reliably recover information that is
+absent from the instance representation, however elaborate the aggregator. We observed this ceiling directly across
 thirty-five iterations of a role-aware utterance-MIL family that plateaued at
 positive-class F1 between 0.50 and 0.58 regardless of how many regularisers
 (focal loss, label smoothing, manifold mixup, stochastic weight averaging,
@@ -425,12 +425,16 @@ single model is the multi-view network of \cite{agarwal2024}, which reports a
 single-run test macro-F1 of 0.80 on the same split; our 30-seed mean
 $0.774\pm0.029$ places that value within about one standard deviation, so on
 macro-F1 the two are statistically indistinguishable under seed variation. The
-Bi-LSTM with self-attention of \cite{10006532} reports $0.7834$, but that is its
-dialogue setting that ingests the interviewer's questions --- the prompt shortcut
-we control for (\Cref{sec:interpret}) --- and its participant-only setting falls to
-$0.7235$; it too sits within one seed standard deviation of $0.774\pm0.029$. Both
-are single runs without an AUC, a micro-F1, an interviewer-prompt bias control, or
-a subject-level interval.
+Bi-LSTM with self-attention of \cite{10006532} reports $0.7834$ in a dialogue
+setting that, like ours, ingests the interviewer's questions; without a bias
+control, however, it cannot be placed in either the clean or the
+interviewer-prompt-inflated regime, so it is competitive but \emph{unverified}.
+Its participant-only setting is $0.7235$, and its dialogue figure sits within one
+seed standard deviation of $0.774\pm0.029$. Both \cite{agarwal2024} and the
+Bi-LSTM are single runs without an AUC, a micro-F1, an interviewer-prompt bias
+control, or a subject-level interval --- the last being exactly the check
+(\Cref{sec:interpret}) that places \emph{our} dialogue number in the
+verified-clean regime.
 
 On UAR (\Cref{tab:external}) the picture is consistent: our $0.77\pm0.03$ exceeds
 \cite{mallolragolta2019} ($0.66$), \cite{xezonaki20_interspeech} ($0.70$) and
@@ -1146,7 +1150,10 @@ exploiting the interviewer prompts, we retrain with all interviewer lines
 removed (\texttt{participant-only}). This \emph{degrades} every metric on the
 official test split (AUC $0.868\!\to\!0.801$, macro-F1 $0.763\!\to\!0.668$;
 \Cref{tab:ponly}), so the interviewer turns supply legitimate topical context
-rather than a removable shortcut; stripped of that context the model leans
+rather than a removable shortcut. Because DAIC's prompts are semi-structured ---
+the same PHQ-style questions, in the same order, for every subject --- they are
+near-constant across classes and cannot by themselves discriminate the label;
+they only contextualise the participant's own answers. Stripped of that context the model leans
 \emph{more} on position (its position--attention correlation rises from $+0.03$
 to $+0.32$, \Cref{tab:interp}), the opposite of a model that had been ignoring
 the prompts. The surviving signal is answer-driven: with the prompts gone the
