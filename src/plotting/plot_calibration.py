@@ -67,8 +67,8 @@ def main():
 
     fig, ax = plt.subplots(1, 2, figsize=(7.0, 3.0), dpi=300)
     # (a) threshold -> F1
-    ax[0].plot(ts, fa, color="#888888", lw=1.4, label="pos\\_weight=auto")
-    ax[0].plot(ts, fp, color="#1f4e9c", lw=1.4, label="pos\\_weight=1.0")
+    ax[0].plot(ts, fa, color="#888888", lw=1.4, label="pos_weight=auto")
+    ax[0].plot(ts, fp, color="#1f4e9c", lw=1.4, label="pos_weight=1.0")
     ax[0].axvline(ta, color="#888888", ls=":", lw=1)
     ax[0].axvline(tp, color="#1f4e9c", ls=":", lw=1)
     ax[0].plot(ts[fa.argmax()], fa.max(), "o", color="#888888", ms=4)
@@ -79,9 +79,9 @@ def main():
     ax[0].set_ylabel("macro-F1", fontsize=8)
     ax[0].set_title("(a) threshold $\\to$ macro-F1", fontsize=9)
     ax[0].tick_params(labelsize=7)
-    ax[0].legend(fontsize=6.5, loc="lower center", frameon=False)
-    ax[0].text(0.5, 0.04, "$\\circ$ oracle  $\\times$ prevalence-threshold",
+    ax[0].text(0.5, 0.16, "$\\circ$ oracle  $\\times$ prevalence-threshold",
                transform=ax[0].transAxes, ha="center", fontsize=6, color="#444")
+    ax[0].legend(fontsize=6.5, loc="lower center", frameon=False)
     # (b) reliability
     xa, ya = reliability(pa, y); xp, yp = reliability(pp, y)
     ax[1].plot([0, 1], [0, 1], ls="--", lw=0.8, color="#b22222")
