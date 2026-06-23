@@ -265,8 +265,8 @@ exchanges and stride $s$, rendering each window as plain dialogue text. With
 $w=4,\ s=2$ this yields on the order of 28 instances per interview, each
 $\approx$65 words, so a window contains a question and its answer ---
 ``how have you been sleeping?'' together with the response --- restoring the
-context that a single backchanneled turn lacks (\Cref{fig:chunk}). Our
-development ablations indicate this is the most influential design choice:
+context that a single backchanneled turn lacks (\Cref{fig:chunk}). Within our
+ablation study this is the most influential design choice:
 widening the window from 2 to 4--6 exchanges is what separates an effective model
 from an ineffective one.
 
@@ -594,10 +594,10 @@ change), and neither moves the AUC.}
 \toprule
 \textbf{Lever} & \textbf{Change} & \textbf{mac-F1} & \textbf{mic-F1} & \textbf{AUC} \\
 \midrule
-0 & baseline ($pw\!\approx\!2.5$) & 0.751{\footnotesize$\pm$.032} & 0.794{\footnotesize$\pm$.026} & 0.856{\footnotesize$\pm$.011} \\
+0 & baseline ($pos\_weight\!\approx\!2.5$) & 0.751{\footnotesize$\pm$.032} & 0.794{\footnotesize$\pm$.026} & 0.856{\footnotesize$\pm$.011} \\
 1 & OOF threshold & 0.750{\footnotesize$\pm$.028} & 0.773{\footnotesize$\pm$.025} & 0.864{\footnotesize$\pm$.011} \\
 2 & temperature scaling & no gain & no gain & 0.856$^{\dagger}$ \\
-\textbf{3} & \textbf{$pw=1.0$} & \textbf{0.774}{\footnotesize$\pm$.029} & \textbf{0.814}{\footnotesize$\pm$.024} & \textbf{0.864}{\footnotesize$\pm$.011} \\
+\textbf{3} & \textbf{$pos\_weight\!=\!1.0$} & \textbf{0.774}{\footnotesize$\pm$.029} & \textbf{0.814}{\footnotesize$\pm$.024} & \textbf{0.864}{\footnotesize$\pm$.011} \\
 4 & symptom decision & no gain & no gain & 0.856$^{\dagger}$ \\
 5 & richer encoder (1.5B) & 0.695{\footnotesize$\pm$.060} & 0.753{\footnotesize$\pm$.036} & 0.804{\footnotesize$\pm$.050} \\
 \midrule
@@ -616,7 +616,7 @@ setting it to 1.0 (lever 3) de-skews the probabilities so the fixed prevalence
 threshold lands near the achievable peak, lifting macro-F1 to 0.774 and making
 the difference from the baseline \cite{milintsevich2023} significant. The class
 weight was swept over 30 seeds --- macro-F1 $0.751$ (auto), $\mathbf{0.774}$
-(1.0), $0.754$ (1.5), $0.751$ (2.0) --- so $pw\!=\!1.0$ is the clear peak and
+(1.0), $0.754$ (1.5), $0.751$ (2.0) --- so $pos\_weight\!=\!1.0$ is the clear peak and
 heavier weighting collapses back to the auto baseline. The two threshold
 variants (lever 1 OOF, lever 8 dev-prevalence) both sit \emph{below} the
 a-priori prevalence of lever 3, confirming that prevalence-matching is the best
