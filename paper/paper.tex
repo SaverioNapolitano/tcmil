@@ -368,6 +368,42 @@ single run or a seed ensemble. We additionally report a subject-level bootstrap
 confidence interval to characterise the uncertainty inherent in a 47-subject
 test set.
 
+\textbf{Configurations.} The paper reports several analyses that, by design, use
+different pooling heads and seed budgets: the headline single-model claims use the
+order-free (plain) attention head fixed a priori for faithful attribution, the
+interpretability and interviewer-prompt probes use the selective BiGRU head whose
+attention is informative, and the cross-corpus transfer uses a participant-only
+variant matched to E-DAIC's un-diarized format. \Cref{tab:config} states, for each
+results table, which head and seed budget it uses and why, so that no number is
+read against the wrong configuration.
+
+\begin{table}[t]
+\caption{Which configuration each result uses. ``Plain'' is the order-free
+attention head (faithful linear attribution); ``GRU'' is the BiGRU temporal head
+(selective, informative attention); ``P-only'' strips interviewer turns. Seed
+budget: per-seed mean over $N$ seeds unless marked \emph{ens.}\ (probability
+ensemble) or \emph{per-run} (fold$\times$seed).}
+\label{tab:config}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}p{0.30\columnwidth}p{0.16\columnwidth}p{0.18\columnwidth}p{0.22\columnwidth}@{}}
+\toprule
+\textbf{Result} & \textbf{Head} & \textbf{Seeds} & \textbf{Purpose} \\
+\midrule
+\Cref{tab:external} (headline) & Plain & 30 & vs.\ literature \\
+\Cref{tab:ladder} (ladder) & Plain\,/\,per-arch & 30 & architecture gain \\
+\Cref{tab:levers} (levers) & Plain & 30 & decision rule \\
+\Cref{tab:abldesign-rep,tab:abldesign-hp} & Plain (GRU cmp.) & 5 dev & config selection \\
+\Cref{tab:cv} (internal CV) & Plain & per-run & internal ranking \\
+\Cref{tab:interp},~\Cref{fig:faith} & GRU\,+\,Plain & 5 dev/test & faithfulness \\
+\Cref{tab:ponly} (prompt ctrl) & GRU, P-only & 5 ens. & bias control \\
+\Cref{tab:ft-grid}--\ref{tab:ft-cv} (FT) & GRU (FT harness) & 5\,/\,30 & encoder adapt. \\
+\Cref{tab:edaic} (transfer) & P-only, none\,/\,GRU & 30 & zero-shot E-DAIC \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \textbf{Significance.} Two regimes are used. For the official split, the 30
 per-seed metrics of two models are \emph{independent} samples, compared with
 the Mann--Whitney $U$ test and Welch's $t$-test. For cross-validation, the
@@ -525,10 +561,17 @@ SS-DAMIL-R (Conv)& \celld{.65}{.06}{.51,.83} & \celld{.53}{.09}{.29,.83} & \cell
 Three readings stand out. First, \emph{utterance-level instances are the
 bottleneck}: flat MIL is no better than the context-free mean on several
 columns, because attention over near-degenerate backchannel embeddings has
-nothing to select. Second, \emph{role context is the biggest legacy lever}
-(DAMIL-R adds 0.05--0.11 AUC over flat MIL) --- it rebuilds part of the missing
-context through cross-role attention, which TC-MIL obtains more directly by
-placing the dialogue inside the instance text. Third, the strongest pooled-CV performers all instantiate the
+nothing to select. Second, \emph{context is what matters, and placing it inside the instance is the
+more effective and direct route to it}. DAMIL-R reinstates context in the
+\emph{aggregator} --- cross-role attention reading each answer in light of its
+question --- and that alone is the biggest legacy lever (it adds 0.05--0.11 AUC
+over flat MIL), confirming context is the operative variable. TC-MIL obtains the
+same context one step earlier, by placing the dialogue inside the instance text,
+and the ladder shows the instance route wins: it is both higher in the mean and
+roughly five times tighter in seed variance than the best aggregator-route model.
+The aggregator and the instance are therefore two ways to supply the same missing
+context; the result is not that aggregation is unnecessary but that the instance
+is the better place to put the context. Third, the strongest pooled-CV performers all instantiate the
 MH architecture and differ only in augmentation hyperparameters, and the two
 genuinely distinct variants (GSI, Conv) do not surpass MH.
 
@@ -1036,8 +1079,12 @@ per-seed attention vectors. We do not assume attention is an explanation
 attended chunks are removed), sufficiency@$k$, and the Spearman correlation
 between each chunk's attention and its leave-one-out $\Delta$probability.
 
-\Cref{tab:interp} reports the aggregate metrics. We then probe per-chunk
-faithfulness directly: for every dialogue chunk we record its attention weight
+\Cref{tab:interp} reports the aggregate metrics. Sufficiency@$k$ is negative for
+both models: the top-$k$ attended chunks alone already drive the probability to
+or above the full-bag value, so the salient chunks suffice, and together with the
+positive comprehensiveness this shows the top chunks carry the bulk of the
+decision even where the per-chunk attention is not faithful. We then probe
+per-chunk faithfulness directly: for every dialogue chunk we record its attention weight
 and its leave-one-out $\Delta$probability, on the test split, for both pooling
 variants of the headline $pos\_weight\!=\!1.0$ model (\Cref{fig:faith}).
 Faithfulness is a \emph{within-interview} property --- whether the
@@ -1121,8 +1168,9 @@ per-interview distribution (stability, attention$\leftrightarrow$occlusion
 correlation) we give mean$\pm$std over interviews; the occlusion correlation
 is tested against 0 by a one-sample $t$-test ($^{**}$ $p<0.01$). The remaining
 rows are 5-seed aggregate point estimates without a per-unit distribution, so
-no test is attached. A positive position--attention correlation would indicate
-the second-half shortcut discovered by \cite{burdisso2024}.}
+no test is attached. Comprehensiveness@$k$ is the probability drop when the
+top-$k$ attended chunks are removed; sufficiency@$k$ is the probability drop when
+only the top-$k$ are kept.}
 \label{tab:interp}
 \centering
 \small
@@ -1134,6 +1182,7 @@ the second-half shortcut discovered by \cite{burdisso2024}.}
 Attention stability (Spearman) & $0.77${\tiny$\pm$.09} & $0.66${\tiny$\pm$.14} \\
 Attn$\leftrightarrow$occlusion corr. & $-0.23${\tiny$\pm$.40}$^{**}$ & $0.00$ \\
 Comprehensiveness @1/@5 & .09/.28 & .06/.29 \\
+Sufficiency @1/@5 & $-.21$/$-.15$ & $-.24$/$-.14$ \\
 Position--attention corr. & $+0.03$ & $+0.32$ \\
 Interviewer-kw attn.\ mass & 0.71 & 0.00 \\
 Symptom AUC (8-item range) & .74--.94 & .75--.91 \\
@@ -1691,13 +1740,54 @@ cleanest validity-checked baseline significantly on three F1 variants and on AUC
 and is on par (within seed variation) with the strongest reported text-only single
 model on the official test split. The improvement is attributable to the
 dialogue-chunk representation (the architecture ladder) and to one
-calibration-level change (the class weight).
+calibration-level change (the class weight). The architecture ladder isolates
+\emph{why}: context is the operative variable, and the instance is a more effective
+and direct place to supply it than the aggregator --- the aggregator-route DAMIL-R
+confirms context helps, and the ladder shows the instance route wins on both mean
+and stability.
 
-Several limitations bound the claim. The test set has 47 subjects, so the
-bootstrap intervals are wide and every DAIC-WOZ number, ours included, is
-uncertain at the third decimal. Attention is not a faithful per-chunk
-explanation, a property we measure rather than assume.
-
+Several limitations bound the claim, beyond the wide intervals already noted.
+\textbf{Sample size.} The official test set has 47 subjects (14 positive), so the
+subject-level bootstrap intervals are wide and every DAIC-WOZ number, ours
+included, is uncertain at the third decimal; our seed-level significance answers
+``does the architecture's expected score differ'' and should not be read as a
+subject-level generalisation guarantee, which the bootstrap shows is far less
+resolved. \textbf{A prevalence prior, not just labels.} The a-priori prevalence
+threshold is leakage-free of test \emph{labels} but assumes the deployment
+prevalence equals the training prevalence ($\approx$0.28); the headline F1 (not
+the threshold-free AUC) therefore depends on that prior, and a different
+prevalence would move the operating point within the oracle-bounded
+$[\,{\approx}0.75,0.80\,]$ band (\Cref{tab:levers}). \textbf{Configuration
+heterogeneity.} Different analyses use different heads and seed budgets (the
+order-free plain head for the headline, the GRU for the interpretability and
+bias-control probes, a participant-only variant for transfer); \Cref{tab:config}
+maps each, but the reader must track which model a given number describes.
+\textbf{Attention is not a faithful per-chunk explanation}, a property we measure
+rather than assume; the faithful, informative signal lives in the occlusion
+attribution, not in an attention heatmap. \textbf{Single corpus and modality.}
+Model selection is on one corpus and text only; the E-DAIC result is zero-shot and
+single-shot, and no audio or visual signal is used. \textbf{Label provenance.} The
+binary label is itself derived from PHQ-8, the same instrument the auxiliary head
+predicts, so the symptom read-out explains a PHQ-8-grounded label rather than an
+independent clinical diagnosis, which DAIC-WOZ does not provide.
+\iffalse
+\textbf{Ethical considerations.} TC-MIL is a research screen, not a diagnostic
+instrument. At a test AUC of $0.86$ in-domain and $\approx\!0.72$ zero-shot, with
+F1 contingent on a prevalence assumption, it is far from the reliability a clinical
+decision would require, and the wide subject-level intervals mean an individual
+prediction is uncertain. The model operates on transcripts of clinical interviews,
+which remain highly sensitive even after de-identification, and the
+interpretability analysis shows the decision leans on participants' own symptom
+disclosures --- so any deployment must treat both the input and the output as
+protected health information. Two failure modes carry asymmetric cost in a
+screening setting: a false negative may withhold care, a false positive may
+stigmatise; the prevalence-matched operating point trades these off at the
+training prevalence, which may not match a target population. Finally,
+generalisation across cohorts, ASR front-ends and demographics is untested beyond
+the single zero-shot E-DAIC transfer, so the model should not be applied to a new
+population without re-validation and human oversight. We release the model for
+reproducible research only and make no clinical-deployment claim.
+\fi
 \section{Conclusion}
 
 We presented TC-MIL, a topic-chunk Multiple-Instance Learning model for
@@ -1762,16 +1852,6 @@ Int.\ Audio/Visual Emotion Challenge and Workshop (AVEC)}, 2019, pp. 3--12.
 relevance of discourse structure for improved mental health estimation,'' in
 \emph{Proc.\ 9th Workshop on Computational Linguistics and Clinical Psychology
 (CLPsych)}, 2024, pp. 127--132.
-% Uncited (was the removed two-encoder ensemble and two-branch/LLM comparison).
-%\bibitem{merzougui2025} D. E. Merzougui, G. Dias, J. Pantin, and F. Maurel,
-%``Evaluating large language models for depression symptom estimation,'' in
-%\emph{Proc.\ Artificial Intelligence in Medicine (AIME)}, 2025.
-%\bibitem{mdsdfgpl2024} J. Zhang and Y. Guo, ``Multilevel depression status
-%detection based on fine-grained prompt learning,'' \emph{Pattern Recognition
-%Letters}, vol. 178, 2024, pp. 167--173.
-%\bibitem{multimtrb2025} Zhang, ``Multi-model text-bag fusion for depression
-%detection from clinical interviews (Multi-MTRB),'' \emph{Scientific Reports},
-%2025.
 \bibitem{ilse2018} M. Ilse, J. M. Tomczak, and M. Welling, ``Attention-based
 deep multiple instance learning,'' in \emph{Proc. ICML}, 2018.
 \bibitem{jain2019} S. Jain and B. C. Wallace, ``Attention is not explanation,''
