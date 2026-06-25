@@ -1757,11 +1757,7 @@ threshold is leakage-free of test \emph{labels} but assumes the deployment
 prevalence equals the training prevalence ($\approx$0.28); the headline F1 (not
 the threshold-free AUC) therefore depends on that prior, and a different
 prevalence would move the operating point within the oracle-bounded
-$[\,{\approx}0.75,0.80\,]$ band (\Cref{tab:levers}). \textbf{Configuration
-heterogeneity.} Different analyses use different heads and seed budgets (the
-order-free plain head for the headline, the GRU for the interpretability and
-bias-control probes, a participant-only variant for transfer); \Cref{tab:config}
-maps each, but the reader must track which model a given number describes.
+$[\,{\approx}0.75,0.80\,]$ band (\Cref{tab:levers}).
 \textbf{Attention is not a faithful per-chunk explanation}, a property we measure
 rather than assume; the faithful, informative signal lives in the occlusion
 attribution, not in an attention heatmap. \textbf{Single corpus and modality.}
