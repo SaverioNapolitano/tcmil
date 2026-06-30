@@ -327,49 +327,82 @@ def run_cv(name, pool, mode, device, args, log, out):
     labels = [iv["label"] for iv in pool]
     groups = [iv["interview_id"] for iv in pool]
     pool_prev = float(np.mean(labels))
-    if mode == "kfold":
-        split_iter = StratifiedGroupKFold(5, shuffle=True, random_state=args.seed)\
-            .split(np.zeros(len(pool)), labels, groups)
-    else:
-        split_iter = StratifiedShuffleSplit(5, test_size=0.2, random_state=args.seed)\
-            .split(np.zeros(len(pool)), labels)
+    pool_np = np.array(pool)
 
     raw, group_preds = [], {}
-    pool_np = np.array(pool)
-    for fold, (tr_idx, te_idx) in enumerate(split_iter, 1):
-        ftrain, ftest = pool_np[tr_idx].tolist(), pool_np[te_idx].tolist()
-        assert {iv["interview_id"] for iv in ftest}.isdisjoint(
-            {iv["interview_id"] for iv in ftrain}), "LEAKAGE"
+
+    def _train_eval(tr_sids, te_sids, val_seed, run_seed, tag, group):
+        """Train one seed on tr_sids (inner-val carved out), eval on te_sids,
+        store the per-run metrics + probabilities tagged for paired matching."""
+        ftrain = [iv for iv in pool if iv["interview_id"] in tr_sids]
+        ftest = [iv for iv in pool if iv["interview_id"] in te_sids]
+        assert te_sids.isdisjoint(tr_sids), "LEAKAGE"
         sids = sorted(iv["interview_id"] for iv in ftrain)
         lab = {iv["interview_id"]: iv["label"] for iv in ftrain}
-        tr_i, va_i = next(StratifiedShuffleSplit(1, test_size=0.15,
-                          random_state=args.seed + fold)
-                          .split(np.zeros(len(sids)), [lab[s] for s in sids]))
+        _, va_i = next(StratifiedShuffleSplit(1, test_size=0.15, random_state=val_seed)
+                       .split(np.zeros(len(sids)), [lab[s] for s in sids]))
         va = {sids[i] for i in va_i}
         itrain = [iv for iv in ftrain if iv["interview_id"] not in va]
         ival = [iv for iv in ftrain if iv["interview_id"] in va]
+        model, fwd = train_one(name, run_seed, itrain, ival, device, args, log)
+        tp, tl = predict(model, fwd, ftest, device)
+        vp, vl = predict(model, fwd, ival, device)
+        t = tune_threshold(None, tp, metric="prevalence", prevalence=pool_prev)
+        m = compute_metrics(tl, (tp >= t).astype(int), tp)
+        m.update({**tag, "probability": tp.tolist(), "true_label": tl.tolist(),
+                  "val_probability": vp.tolist(), "val_true_label": vl.tolist()})
+        raw.append(m)
+        group_preds.setdefault(group, []).append(
+            {"probability": tp, "true_label": tl,
+             "val_probability": vp, "val_true_label": vl})
+        return m
 
-        group_preds[fold] = []
-        for s in range(args.cv_seeds):
-            model, fwd = train_one(name, args.seed + fold * 100 + s,
-                                   itrain, ival, device, args, log)
-            tp, tl = predict(model, fwd, ftest, device)
-            vp, vl = predict(model, fwd, ival, device)
-            t = tune_threshold(None, tp, metric="prevalence", prevalence=pool_prev)
-            m = compute_metrics(tl, (tp >= t).astype(int), tp)
-            m.update({"_fold_idx": fold, "_seed_idx": s,
-                      "probability": tp.tolist(), "true_label": tl.tolist(),
-                      "val_probability": vp.tolist(), "val_true_label": vl.tolist()})
-            raw.append(m)
-            group_preds[fold].append({"probability": tp, "true_label": tl,
-                                      "val_probability": vp, "val_true_label": vl})
-            log.info(f"  [{name}] {mode} f{fold}s{s}: AUC={m['roc_auc']:.4f} "
-                     f"F1={m['f1']:.4f}")
+    if mode == "kfold":
+        # Mirror cv_tcmil.py: split random_state = seed + 1000*rep and run seed
+        # = rep_seed + 100*fold + seed_idx, so fold membership and run seeds
+        # match TC-MIL run-for-run -> paired at every (repeat, fold, seed) cell.
+        for rep in range(getattr(args, "n_repeats", 1)):
+            rep_seed = args.seed + 1000 * rep
+            split_iter = StratifiedGroupKFold(args.n_splits, shuffle=True,
+                                              random_state=rep_seed)\
+                .split(np.zeros(len(pool)), labels, groups)
+            for fold, (tr_idx, te_idx) in enumerate(split_iter, 1):
+                tr_sids = {pool[i]["interview_id"] for i in tr_idx}
+                te_sids = {pool[i]["interview_id"] for i in te_idx}
+                for s in range(args.cv_seeds):
+                    m = _train_eval(tr_sids, te_sids, rep_seed + fold,
+                                    rep_seed + fold * 100 + s,
+                                    {"_fold_idx": fold, "_seed_idx": s, "_repeat": rep},
+                                    rep * 1000 + fold)
+                    log.info(f"  [{name}] kfold r{rep}f{fold}s{s}: "
+                             f"AUC={m['roc_auc']:.4f} F1={m['f1']:.4f}")
+    else:  # mc -- mirror run_monte_carlo_cv_ensemble: StratifiedShuffleSplit
+        # over the SORTED UNIQUE subjects with random_state = seed and run seed
+        # = seed + 100*split + seed_idx, so the test-subject membership matches
+        # TC-MIL's MC splits run-for-run (paired at every (split, seed) cell).
+        subj = {}
+        for iv in pool:
+            subj.setdefault(iv["interview_id"], iv["label"])
+        usids = sorted(subj)
+        ulab = [subj[s] for s in usids]
+        cv = StratifiedShuffleSplit(n_splits=args.n_splits, test_size=0.2,
+                                    random_state=args.seed)
+        for split_idx, (tr_i, te_i) in enumerate(
+                cv.split(np.zeros(len(ulab)), ulab), 1):
+            tr_sids = {usids[i] for i in tr_i}
+            te_sids = {usids[i] for i in te_i}
+            for s in range(args.cv_seeds):
+                m = _train_eval(tr_sids, te_sids, args.seed + split_idx,
+                                args.seed + split_idx * 100 + s,
+                                {"_split_idx": split_idx, "_seed_idx": s},
+                                split_idx)
+                log.info(f"  [{name}] mc sp{split_idx}s{s}: "
+                         f"AUC={m['roc_auc']:.4f} F1={m['f1']:.4f}")
 
     def ens_thr(gi, vy, vp, tp):
         return tune_threshold(None, tp, metric="prevalence", prevalence=pool_prev)
 
-    ens = _seed_ensemble_metrics(group_preds, "_fold_idx", ens_thr)
+    ens = _seed_ensemble_metrics(group_preds, "_group", ens_thr)
     return {"per_run_aggregate": compute_aggregate_metrics(raw),
             "ensemble_aggregate": compute_aggregate_metrics(ens),
             "raw": raw}
@@ -383,6 +416,8 @@ def main():
     p.add_argument("--protocols", nargs="+", default=["official", "kfold", "mc"])
     p.add_argument("--n_seeds", type=int, default=5)       # official
     p.add_argument("--cv_seeds", type=int, default=3)      # per fold/split
+    p.add_argument("--n_repeats", type=int, default=1)     # kfold repeats (cv_tcmil-aligned)
+    p.add_argument("--n_splits", type=int, default=5)      # kfold folds / mc splits
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--accum", type=int, default=8)

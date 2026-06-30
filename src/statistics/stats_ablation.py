@@ -1,113 +1,95 @@
-"""Full statistical test suite: TC-MIL vs each legacy baseline.
+"""Statistical-test suite: TC-MIL vs the legacy ladder baselines.
 
-Reads only saved artifacts (no training). Two regimes:
+Single source of truth for the internal cross-validation tables (tab:cv,
+tab:cvstats) and the official-split independent tests (tab:stats). Every legacy
+baseline is run at TC-MIL's full budget and aligned run-for-run, so each paired
+comparison is matched at every cell:
 
-PAIRED (same fold + seed seen by both models -> matched samples):
-    - Wilcoxon signed-rank (non-parametric)
-    - paired t-test (parametric)
-  Source: per-run K-Fold and MC metrics in results/cross_validation/<tcmil>/cv_results.json
-  and results/baselines/legacy_aligned/<model>_<kfold|mc>/results.json, joined on
-  (_repeat, _fold_idx, _seed_idx). The CV split seed is shared (random_state
-  42), so fold membership is identical across models -> legitimately paired.
+  K-Fold : 5 repeats x 5 folds x 5 seeds = 125 paired runs (matched on
+           (repeat, fold, seed); StratifiedGroupKFold seed = 42 + 1000*rep).
+  MC     : 5 splits x 10 seeds           =  50 paired runs (matched on
+           (split, seed); StratifiedShuffleSplit over the SORTED UNIQUE subjects
+           with seed = 42 -- identical test membership to TC-MIL).
 
-INDEPENDENT (per-seed official metrics, different seeds -> independent samples):
-    - Mann-Whitney U (non-parametric)
-    - Welch's t-test (parametric, unequal variance)
-  Source: test_per_seed (30 seeds) in each *_official/results.json.
+Two regimes:
+  PAIRED (same fold/split + seed seen by both models -> matched samples):
+      Wilcoxon signed-rank + paired t-test, over the per-run K-Fold / MC metrics
+      in results/cross_validation/{kfold_pw1,mc_pw1}/cv_results.json and the
+      baselines in results/cross_validation/legacy_{kfold,mc}_aligned/.
+  INDEPENDENT (30-seed official per-seed metrics, different seeds):
+      Mann-Whitney U + Welch's t-test, over the test_prob_runs in each
+      *_official/results.json, recomputed at the a-priori prevalence threshold.
 
-Metrics tested: macro_f1 and roc_auc.
+Reads only saved artifacts (no training).
 """
-
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
-from scipy.stats import wilcoxon, mannwhitneyu, ttest_rel, ttest_ind
+from scipy.stats import wilcoxon, ttest_rel, mannwhitneyu, ttest_ind
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
+from src.training.train_tcmil_official import tune_threshold
+from src.core.utils.metrics import compute_metrics
 
-# Best single model = bge-large + GRU + pos_weight=1.0 (the winning recipe).
 TCMIL = {
     "kfold": "results/cross_validation/kfold_pw1/cv_results.json",
     "mc": "results/cross_validation/mc_pw1/cv_results.json",
     "official": "results/single_model/headline_pw1_30seed/results.json",
 }
-LEGACY = ["dialogue_mean", "flat_mil_mean", "flat_mil_attn", "damil_r",
-          "ss_damil_r_mh", "ss_damil_r_gsi", "ss_damil_r_conv"]
-
-
-from src.training.train_tcmil_official import tune_threshold
-from src.core.utils.metrics import compute_metrics
-
-# A-priori prevalence threshold rates: train prevalence for the official split,
-# CV-pool prevalence for K-Fold/MC. Every threshold-dependent metric (UAR
-# [= balanced accuracy], micro-F1 [= accuracy], pos-/macro-F1, precision,
-# recall) is recomputed at this fixed rate, so it is honest, not a test-tuned
-# oracle.
-#
-# CAVEAT (threshold source for the paper tables): the published official-split
-# numbers in tab:ladder / tab:external / tab:stats come from THIS module --
-# per-seed metrics rate-matched to a-priori prevalence on each seed's own test
-# probabilities (see _official_per_seed). They are NOT the `test_per_seed` /
-# `test_by_strategy["prevalence"]` fields in results.json: those apply the
-# DEV-selected threshold (t=0.35 for the headline run), which on the test split
-# yields a ~0.43 positive rate -> recall-heavy, higher-f1, lower-precision
-# numbers that do NOT match the paper. Always regenerate paper tables via this
-# a-priori-prevalence reduction; do not read results.json test_per_seed
-# directly.
-OFFICIAL_PREV = 0.28
+LEGDIR = {
+    "kfold": "results/cross_validation/legacy_kfold_aligned/{}_kfold/results.json",
+    "mc": "results/cross_validation/legacy_mc_aligned/{}_mc/results.json",
+    # Official-split 30-seed baselines (independent regime).
+    "official": "results/baselines/legacy_aligned/{}_official/results.json",
+}
+LADDER = [
+    ("dialogue_mean", "dialogue mean"),
+    ("flat_mil_mean", "flat MIL, mean"),
+    ("flat_mil_attn", "flat MIL, attn"),
+    ("damil_r", "DAMIL-R"),
+    ("ss_damil_r_mh", "SS-DAMIL-R (MH)"),
+    ("ss_damil_r_gsi", "SS-DAMIL-R (GSI)"),
+    ("ss_damil_r_conv", "SS-DAMIL-R (Conv)"),
+]
+METRICS = [
+    ("UAR", "balanced_accuracy"), ("Prec.", "precision"), ("Recall", "recall"),
+    ("pos-F1", "f1"), ("macro-F1", "macro_f1"), ("micro-F1", "micro_f1"),
+    ("PR-AUC", "pr_auc"), ("ROC-AUC", "roc_auc"),
+]
+OFFICIAL_PREV = 0.28  # a-priori (training) prevalence for the official split
 
 
 def keyed(raw):
+    """Key each run by (repeat, group, seed); group is the fold (K-Fold) or the
+    split (MC)."""
     out = {}
     for m in raw:
-        group = m.get("_fold_idx", m.get("_split_idx"))
-        out[(m.get("_repeat", 0), group, m["_seed_idx"])] = m
+        g = m.get("_fold_idx", m.get("_split_idx"))
+        if g is None:
+            continue
+        out[(m.get("_repeat", 0), g, m["_seed_idx"])] = m
     return out
 
 
-def _metric_from_run(run, metric, prev):
-    """Return run[metric] if present; else recompute (micro_f1) from the run's
-    saved probabilities at the prevalence-matched threshold."""
-    if metric in run and run[metric] is not None:
-        return run[metric]
-    prob = np.asarray(run["probability"]); y = np.asarray(run["true_label"])
-    t = tune_threshold(None, prob, metric="prevalence", prevalence=prev)
-    return compute_metrics(y, (prob >= t).astype(int), prob)[metric]
+def boot_ci(vals, n=2000, seed=0):
+    rng = np.random.default_rng(seed)
+    means = [rng.choice(vals, size=len(vals), replace=True).mean() for _ in range(n)]
+    return np.percentile(means, 2.5), np.percentile(means, 97.5)
 
 
-def _pool_prev(raw):
-    """CV-pool prevalence = mean label over one repeat's concatenated folds."""
-    rep0 = [m for m in raw if m.get("_repeat", 0) == 0 and m.get("_seed_idx") == 0]
-    ys = np.concatenate([np.asarray(m["true_label"]) for m in rep0]) if rep0 else None
-    return float(ys.mean()) if ys is not None and len(ys) else 0.30
-
-
-def paired(tcmil_raw, legacy_path, metric):
-    if not Path(legacy_path).exists():
-        return None
-    a = keyed(tcmil_raw)
-    b = keyed(json.load(open(legacy_path))["raw"])
-    keys = sorted(set(a) & set(b))
-    if len(keys) < 6:
-        return None
-    pa, pb = _pool_prev(tcmil_raw), _pool_prev(json.load(open(legacy_path))["raw"])
-    xa = np.array([_metric_from_run(a[k], metric, pa) for k in keys])
-    xb = np.array([_metric_from_run(b[k], metric, pb) for k in keys])
-    w, pw = wilcoxon(xa, xb)
-    t, pt = ttest_rel(xa, xb)
-    return dict(n=len(keys), a=xa.mean(), b=xb.mean(), d=xa.mean() - xb.mean(),
-                wilcoxon_p=pw, paired_t_p=pt)
+def fmt_p(p):
+    if p < 0.001:
+        return r"$<$.001$^{*}$"
+    s = f"{p:.3f}"
+    return s + (r"$^{*}$" if p < 0.05 else "")
 
 
 def _official_per_seed(path, metric):
-    """Per-seed official metric, recomputed from test_prob_runs at the **same
-    a-priori prevalence (testprev) threshold** the headline uses — NOT the
-    stored test_per_seed (which used a dev-selected threshold). This keeps the
-    stats consistent with the reported headline and applies one identical
-    threshold rule to TC-MIL and every legacy model."""
+    """Per-seed official metric, recomputed from test_prob_runs at the a-priori
+    prevalence (testprev) threshold the headline uses -- not the stored
+    dev-selected test_per_seed -- so one identical rule is applied to TC-MIL and
+    every baseline."""
     r = json.load(open(path))
     y = np.asarray(r["test_labels"])
     out = []
@@ -118,63 +100,94 @@ def _official_per_seed(path, metric):
     return np.array(out)
 
 
-def independent(tcmil_official, legacy_official, metric):
-    if not Path(legacy_official).exists():
-        return None
-    xa = _official_per_seed(tcmil_official, metric)
-    xb = _official_per_seed(legacy_official, metric)
-    u, pu = mannwhitneyu(xa, xb, alternative="two-sided")
-    t, pt = ttest_ind(xa, xb, equal_var=False)
-    return dict(na=len(xa), nb=len(xb), a=xa.mean(), b=xb.mean(),
-                d=xa.mean() - xb.mean(), mwu_p=pu, welch_t_p=pt)
+def paired_cv(proto):
+    """Per-run aggregate (tab:cv) + paired Wilcoxon/paired-t (tab:cvstats)."""
+    tc = keyed(json.load(open(TCMIL[proto]))["raw"])
+    out = [f"\n########## {proto.upper()}  (TC-MIL cells: {len(tc)}) ##########"]
+
+    out.append(f"\n=== tab:cv  {proto} per-run aggregate "
+               f"(mean +/- std [95% CI of mean]) ===")
+    rows = []
+    for key, name in LADDER:
+        p = LEGDIR[proto].format(key)
+        if not Path(p).exists():
+            out.append(f"  [missing] {p}")
+            continue
+        rows.append((name, keyed(json.load(open(p))["raw"])))
+    rows.append(("TC-MIL", tc))
+    for name, kd in rows:
+        out.append(f"\n{name}  (n={len(kd)})")
+        for label, mk in METRICS:
+            vals = np.array([kd[k][mk] for k in kd if mk in kd[k]])
+            lo, hi = boot_ci(vals)
+            out.append(f"    {label}={vals.mean():.2f}+/-{vals.std(ddof=1):.2f}"
+                       f"[{lo:.2f},{hi:.2f}]")
+
+    out.append(f"\n=== tab:cvstats  {proto} paired (Wilcoxon | paired-t) ===")
+    for key, name in LADDER:
+        p = LEGDIR[proto].format(key)
+        if not Path(p).exists():
+            continue
+        lg = keyed(json.load(open(p))["raw"])
+        keys = sorted(set(tc) & set(lg))
+        out.append(f"\nTC-MIL vs {name}  (n={len(keys)} matched)")
+        for label, mk in METRICS:
+            xa = np.array([tc[k][mk] for k in keys])
+            xb = np.array([lg[k][mk] for k in keys])
+            if np.allclose(xa, xb):
+                pw = pt = 1.0
+            else:
+                _, pw = wilcoxon(xa, xb)
+                _, pt = ttest_rel(xa, xb)
+            out.append(f"   {label:9s} d={xa.mean()-xb.mean():+.3f}  "
+                       f"W={fmt_p(pw)}  t={fmt_p(pt)}")
+    return out
 
 
-def stars(p):
-    return "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+def independent_official():
+    """Official 30-seed independent tests (tab:stats): Mann-Whitney U + Welch."""
+    out = ["\n########## OFFICIAL 30-seed INDEPENDENT (Mann-Whitney | Welch) ##########"]
+    if not Path(TCMIL["official"]).exists():
+        out.append(f"  [missing] {TCMIL['official']}")
+        return out
+    for key, name in LADDER:
+        p = LEGDIR["official"].format(key)
+        if not Path(p).exists():
+            out.append(f"\nTC-MIL vs {name}: [missing official baseline {p}]")
+            continue
+        out.append(f"\nTC-MIL vs {name}")
+        for label, mk in METRICS:
+            xa = _official_per_seed(TCMIL["official"], mk)
+            xb = _official_per_seed(p, mk)
+            _, pu = mannwhitneyu(xa, xb, alternative="two-sided")
+            _, pt = ttest_ind(xa, xb, equal_var=False)
+            out.append(f"   {label:9s} TC={xa.mean():.3f} base={xb.mean():.3f} "
+                       f"d={xa.mean()-xb.mean():+.3f}  MWU={fmt_p(pu)}  Welch={fmt_p(pt)}")
+    return out
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="results/stats/ablation_stats.md")
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--protocols", nargs="+", default=["kfold", "mc"],
+                    help="paired CV protocols to report")
+    ap.add_argument("--independent", action="store_true",
+                    help="also report the official 30-seed independent tests")
+    ap.add_argument("--out", default="results/stats/ablation_stats.md",
+                    help="path to write the report (set empty to skip)")
     args = ap.parse_args()
-    lines = ["# Statistical tests — TC-MIL vs legacy baselines\n",
-             "TC-MIL: K-Fold = bge-large+GRU (5x5 repeats); MC = 3-member s10; "
-             "official = bge-large 30-seed. Legacy = `results/baselines/legacy_aligned/`. "
-             "Metrics: macro-F1, micro-F1 (≡accuracy), ROC-AUC. micro-F1 is "
-             "recomputed from saved probabilities at the same a-priori "
-             "prevalence threshold as macro-F1 (honest, not test-tuned). "
-             "p-values two-sided; `***`<0.001 `**`<0.01 `*`<0.05.\n"]
 
-    kf = json.load(open(TCMIL["kfold"]))["raw"]
-    mc = json.load(open(TCMIL["mc"]))["raw"]
+    lines = []
+    for proto in args.protocols:
+        lines += paired_cv(proto)
+    if args.independent:
+        lines += independent_official()
 
-    for metric in ["macro_f1", "micro_f1", "roc_auc"]:
-        lines.append(f"\n## {metric} — PAIRED (matched fold+seed)\n")
-        lines.append("| vs | proto | n | TC-MIL | legacy | Δ | Wilcoxon p | paired-t p |")
-        lines.append("|---|---|--:|--:|--:|--:|--:|--:|")
-        for model in LEGACY:
-            for proto, raw in [("kfold", kf), ("mc", mc)]:
-                r = paired(raw, f"results/baselines/legacy_aligned/{model}_{proto}/results.json", metric)
-                if r:
-                    lines.append(f"| {model} | {proto} | {r['n']} | {r['a']:.3f} | "
-                                 f"{r['b']:.3f} | {r['d']:+.3f} | {r['wilcoxon_p']:.3g} "
-                                 f"{stars(r['wilcoxon_p'])} | {r['paired_t_p']:.3g} "
-                                 f"{stars(r['paired_t_p'])} |")
-
-        lines.append(f"\n## {metric} — INDEPENDENT (30-seed official per-seed)\n")
-        lines.append("| vs | nA/nB | TC-MIL | legacy | Δ | Mann-Whitney U p | Welch-t p |")
-        lines.append("|---|---|--:|--:|--:|--:|--:|")
-        for model in LEGACY:
-            r = independent(TCMIL["official"],
-                            f"results/baselines/legacy_aligned/{model}_official/results.json", metric)
-            if r:
-                lines.append(f"| {model} | {r['na']}/{r['nb']} | {r['a']:.3f} | "
-                             f"{r['b']:.3f} | {r['d']:+.3f} | {r['mwu_p']:.3g} "
-                             f"{stars(r['mwu_p'])} | {r['welch_t_p']:.3g} {stars(r['welch_t_p'])} |")
-
-    Path(args.out).write_text("\n".join(lines) + "\n")
-    print("\n".join(lines))
-    print(f"\nsaved {args.out}")
+    report = "\n".join(lines)
+    print(report)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(report + "\n")
+        print(f"\nsaved {args.out}")
 
 
 if __name__ == "__main__":
