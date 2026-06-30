@@ -272,5 +272,4 @@ data/              daic-woz/ + e-daic/ (user-provided labels + downloaded transc
 results/           run outputs (results.json per run)
 checkpoints/       saved weights
 paper/             LaTeX manuscript, figures, refs
-doc/report/        design notes, baseline verification, backlog/roadmap (history)
 ```
