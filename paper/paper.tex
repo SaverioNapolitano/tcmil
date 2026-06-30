@@ -134,7 +134,7 @@ ones (\Cref{sec:method}).
 split --- per-seed mean$\pm$std over 30 seeds, a-priori prevalence thresholds, a
 single test evaluation, and non-parametric and parametric significance testing
 --- under which a single TC-MIL network beats the cleanest validity-checked
-text-only baseline on positive-, macro- and micro-F1 and on AUC, and matches the
+text-only baseline on positive-, macro- and micro-F1, and matches the
 strongest reported text-only single model within seed variation
 (\Cref{sec:protocol,sec:external}).
 \item \textbf{Extensive validation} under that protocol: an architecture
@@ -354,13 +354,25 @@ threshold: choose $t$ so that the predicted positive rate matches the training
 prevalence ($\approx$0.28). This uses the model's scores and a training-derived
 prior but never a test label, so it is leakage-free.
 
-\textbf{Metrics.} We report ROC-AUC (threshold-free ranking), positive-class
-F1, macro-F1, micro-F1 (which equals accuracy for single-label binary
-classification), and the unweighted average recall (UAR --- the mean of the
-per-class recalls, identical to balanced accuracy), the last being the standard
-balanced metric in the depression-detection literature. Both threshold-dependent metrics are computed at the
-same a-priori prevalence threshold as macro-F1, so they are honest and not
-separately tuned oracles.
+\textbf{Metrics.} Writing TP, TN, FP, FN for the per-class confusion counts,
+precision is $\mathrm{TP}/(\mathrm{TP}{+}\mathrm{FP})$, recall
+$\mathrm{TP}/(\mathrm{TP}{+}\mathrm{FN})$, and F1 their harmonic mean. We report
+ROC-AUC (threshold-free ranking), positive-class F1, macro-F1 (the unweighted
+both-class mean F1), micro-F1, and the unweighted average recall (UAR). Two
+equalities follow from the single-label binary setting and are worth stating
+explicitly. \emph{Micro-F1 $=$ accuracy}: micro-averaging pools the confusion
+counts across classes, and since each instance carries exactly one prediction
+every error is at once one FP and one FN, so $\sum\mathrm{FP}=\sum\mathrm{FN}$,
+micro-precision $=$ micro-recall, and hence
+$\text{micro-F1}=(\mathrm{TP}{+}\mathrm{TN})/N=\text{accuracy}$.
+\emph{UAR $=$ balanced accuracy}:
+$\text{UAR}=\tfrac12\!\left(\tfrac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}}
++\tfrac{\mathrm{TN}}{\mathrm{TN}+\mathrm{FP}}\right)$ is the mean of the
+per-class recalls (sensitivity and specificity), identical to balanced accuracy
+by definition, and is the standard balanced metric in the depression-detection
+literature. Both threshold-dependent metrics are computed at the same a-priori
+prevalence threshold as macro-F1, so they are honest and not separately tuned
+oracles.
 
 \textbf{Seeds and reporting.} Every
 official-split number is a per-seed mean$\pm$std over 30 seeds, rather than a
@@ -395,11 +407,12 @@ ensemble) or \emph{per-run} (fold$\times$seed).}
 \Cref{tab:ladder} (ladder) & Plain\,/\,per-arch & 30 & architecture gain \\
 \Cref{tab:levers} (levers) & Plain & 30 & decision rule \\
 \Cref{tab:abldesign-rep,tab:abldesign-hp} & Plain (GRU cmp.) & 5 dev & config selection \\
-\Cref{tab:cv} (internal CV) & Plain & per-run & internal ranking \\
-\Cref{tab:interp},~\Cref{fig:faith} & GRU\,+\,Plain & 5 dev/test & faithfulness \\
+\Cref{tab:cv} (internal CV) & GRU & per-run & internal ranking \\
+\Cref{tab:interp} (interp.) & GRU & 5 dev/test & faithfulness \\
+\Cref{fig:faith} (faith.) & GRU\,+\,Plain & 5 dev/test & faithfulness \\
 \Cref{tab:ponly} (prompt ctrl) & GRU, P-only & 5 ens. & bias control \\
-\Cref{tab:ft-grid}--\ref{tab:ft-cv} (FT) & GRU (FT harness) & 5\,/\,30 & encoder adapt. \\
-\Cref{tab:edaic} (transfer) & P-only, none\,/\,GRU & 30 & zero-shot E-DAIC \\
+% \Cref{tab:ft-grid}--\ref{tab:ft-cv} (FT) & GRU (FT harness) & 5\,/\,30 & encoder adapt. \\ % FT section is \iffalse'd out; tables tab:ft-* do not exist in the build
+\Cref{tab:edaic} (transfer) & P-only, Plain\,/\,GRU & 30 & zero-shot E-DAIC \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -580,12 +593,12 @@ deviation is roughly five times tighter than that of the best legacy model.
 Against the role-aware models the per-run cross-validation differences are not
 always significant (\Cref{sec:internal}); TC-MIL's clearest margins are on the
 official split, where every per-seed gap to a baseline is significant
-(\Cref{tab:stats}), and on the Monte Carlo headline.
+(\Cref{tab:stats}), and on the $K$-Fold internal split.
 
 \Cref{fig:forest} shows the official-split macro-F1 of the whole ladder with
 subject-bootstrap 95\% CIs and the reference baseline \cite{milintsevich2023}:
-TC-MIL is the only model whose interval clears the 0.739 line, while the wide
-intervals of the weak models reflect their unstable, rate-matched probabilities.
+TC-MIL is the only model whose \emph{mean} clears the 0.739 line --- its
+bootstrap interval, like every model's, still contains it.
 
 \begin{figure}[t]
 \centering
@@ -627,7 +640,7 @@ transfers at 30 seeds.
 \begin{table}[t]
 \caption{Single-lever study, official split; cells are per-seed mean$\pm$std over
 30 seeds (CIs omitted as this is an ablation; the lever-3 bootstrap CI is in
-\Cref{tab:external}). Only the class weight (lever 3) transfers robustly.
+\Cref{tab:external}).
 $^{\dagger}$Levers 2/4 are calibration/decision deltas with no per-seed
 probabilities to tabulate (temperature scaling is monotonic, so its threshold
 metrics equal lever 3 by construction; the symptom decision gave no measurable
@@ -801,17 +814,22 @@ The official-split comparison is external. To check
 that the ranking is not an artifact of one split, we cross-validate on the
 training pool only (142 subjects, test excluded), which is an \emph{internal}
 comparison specific to our protocol. We use repeated Stratified Group $K$-Fold
-($5\times5$) and Monte Carlo (repeated stratified shuffle) splits, with the
+(5 repeats $\times$ 5 folds, 5 seeds per fold $=125$ per-run evaluations per
+model) and Monte Carlo (repeated stratified shuffle) splits, with the
 transductive-prevalence threshold (match the predicted positive rate on each
 fold's own unlabelled test scores to the training prevalence), which is
-scale-safe across folds and uses no labels.
+scale-safe across folds and uses no labels. Because this comparison probes the
+architecture \emph{ranking} rather than per-chunk faithfulness, TC-MIL is
+evaluated here with its GRU temporal head (the development-best configuration);
+the order-free plain head fixed for the faithful headline (\Cref{sec:interpret})
+is not required for a ranking check, and the official-split tables retain it.
 
 \begin{table*}[t]
 \caption{Internal cross-validation on the training pool, full
 architecture ladder, per-run single model, at the
 transductive-prevalence threshold. Each cell is the mean$\,{\pm}\,$std (top)
 and the 95\% CI of the mean (bottom, bootstrap over the per-run
-folds$\times$seeds).}
+repeats$\times$folds$\times$seeds).}
 \label{tab:cv}
 \centering
 \scriptsize
@@ -821,36 +839,36 @@ folds$\times$seeds).}
 \textbf{Proto} & \textbf{Model} & \textbf{UAR} & \textbf{Prec.} & \textbf{Recall} & \textbf{pos-F1} & \textbf{macro-F1} & \textbf{micro-F1} & \textbf{PR-AUC} & \textbf{ROC-AUC} \\
 \midrule
 \multirow{8}{*}{$K$-Fold}
- & dialogue mean & \celld{.55}{.08}{.51,.59} & \celld{.23}{.29}{.10,.40} & \celld{.22}{.31}{.08,.39} & \celld{.19}{.23}{.08,.32} & \celld{.49}{.10}{.44,.54} & \celld{.68}{.05}{.66,.70} & \celld{.58}{.13}{.51,.64} & \celld{.73}{.07}{.69,.76} \\
+ & dialogue mean & \celld{.53}{.07}{.52,.55} & \celld{.13}{.24}{.09,.17} & \celld{.14}{.25}{.09,.18} & \celld{.13}{.22}{.09,.17} & \celld{.47}{.10}{.45,.49} & \celld{.70}{.05}{.69,.71} & \celld{.56}{.13}{.54,.58} & \celld{.69}{.11}{.68,.71} \\
 \addlinespace[1.5pt]
- & flat MIL, mean & \celld{.52}{.06}{.50,.56} & \celld{.11}{.23}{.00,.24} & \celld{.08}{.17}{.00,.17} & \celld{.09}{.19}{.00,.19} & \celld{.46}{.10}{.41,.51} & \celld{.71}{.04}{.69,.73} & \celld{.52}{.08}{.48,.56} & \celld{.69}{.08}{.65,.73} \\
+ & flat MIL, mean & \celld{.52}{.06}{.51,.53} & \celld{.13}{.26}{.08,.17} & \celld{.08}{.18}{.05,.11} & \celld{.08}{.18}{.05,.12} & \celld{.45}{.08}{.44,.47} & \celld{.70}{.03}{.70,.71} & \celld{.48}{.12}{.46,.50} & \celld{.63}{.12}{.61,.65} \\
 \addlinespace[1.5pt]
- & flat MIL, attn & \celld{.52}{.04}{.50,.55} & \celld{.10}{.22}{.00,.23} & \celld{.07}{.14}{.00,.15} & \celld{.08}{.17}{.00,.17} & \celld{.45}{.08}{.41,.50} & \celld{.70}{.03}{.69,.72} & \celld{.51}{.10}{.46,.56} & \celld{.66}{.11}{.61,.71} \\
+ & flat MIL, attn & \celld{.53}{.07}{.52,.54} & \celld{.17}{.29}{.11,.22} & \celld{.12}{.22}{.08,.16} & \celld{.12}{.21}{.09,.16} & \celld{.47}{.10}{.45,.49} & \celld{.70}{.05}{.69,.71} & \celld{.51}{.13}{.49,.53} & \celld{.64}{.11}{.62,.66} \\
 \addlinespace[1.5pt]
- & DAMIL-R & \celld{.68}{.13}{.62,.74} & \celld{.55}{.17}{.46,.63} & \celld{.55}{.19}{.45,.64} & \celld{.55}{.18}{.46,.63} & \celld{.68}{.13}{.61,.74} & \celld{.73}{.10}{.68,.78} & \celld{.62}{.15}{.54,.69} & \celld{.75}{.13}{.68,.81} \\
+ & DAMIL-R & \celld{.67}{.12}{.65,.68} & \celld{.53}{.16}{.50,.56} & \celld{.53}{.17}{.50,.56} & \celld{.53}{.17}{.50,.56} & \celld{.66}{.12}{.64,.68} & \celld{.72}{.10}{.70,.74} & \celld{.60}{.15}{.57,.63} & \celld{.73}{.13}{.71,.75} \\
 \addlinespace[1.5pt]
- & SS-DAMIL-R (MH)& \celld{.64}{.11}{.58,.70} & \celld{.50}{.16}{.41,.57} & \celld{.51}{.18}{.41,.60} & \celld{.49}{.16}{.41,.57} & \celld{.64}{.11}{.58,.69} & \celld{.70}{.10}{.65,.74} & \celld{.59}{.15}{.51,.66} & \celld{.71}{.12}{.65,.77} \\
+ & SS-DAMIL-R (MH)& \celld{.62}{.11}{.60,.64} & \celld{.46}{.21}{.43,.50} & \celld{.44}{.22}{.40,.48} & \celld{.44}{.20}{.40,.47} & \celld{.61}{.12}{.59,.63} & \celld{.70}{.09}{.68,.71} & \celld{.55}{.14}{.52,.57} & \celld{.69}{.13}{.67,.71} \\
 \addlinespace[1.5pt]
- & SS-DAMIL-R (GSI)& \celld{.66}{.10}{.61,.71} & \celld{.51}{.12}{.45,.57} & \celld{.54}{.13}{.48,.61} & \celld{.52}{.12}{.46,.58} & \celld{.65}{.10}{.61,.70} & \celld{.71}{.09}{.66,.75} & \celld{.60}{.10}{.55,.65} & \celld{.76}{.08}{.72,.80} \\
+ & SS-DAMIL-R (GSI)& \celld{.62}{.12}{.60,.64} & \celld{.46}{.21}{.42,.50} & \celld{.44}{.22}{.40,.48} & \celld{.44}{.21}{.40,.48} & \celld{.61}{.13}{.59,.64} & \celld{.69}{.09}{.68,.71} & \celld{.54}{.15}{.51,.57} & \celld{.69}{.13}{.67,.72} \\
 \addlinespace[1.5pt]
- & SS-DAMIL-R (Conv)& \celld{.62}{.10}{.57,.67} & \celld{.46}{.22}{.34,.57} & \celld{.42}{.23}{.30,.54} & \celld{.42}{.21}{.31,.52} & \celld{.61}{.12}{.55,.67} & \celld{.71}{.08}{.66,.74} & \celld{.58}{.15}{.51,.66} & \celld{.71}{.11}{.65,.76} \\
+ & SS-DAMIL-R (Conv)& \celld{.63}{.11}{.61,.65} & \celld{.49}{.19}{.45,.52} & \celld{.45}{.21}{.42,.49} & \celld{.45}{.19}{.42,.49} & \celld{.62}{.12}{.60,.64} & \celld{.70}{.09}{.69,.72} & \celld{.55}{.15}{.52,.57} & \celld{.69}{.13}{.67,.71} \\
 \addlinespace[1.5pt]
  & \textbf{TC-MIL} & \celld{\textbf{.70}}{.11}{.69,.72} & \celld{\textbf{.59}}{.20}{.56,.63} & \celld{\textbf{.55}}{.21}{.52,.59} & \celld{\textbf{.56}}{.20}{.53,.60} & \celld{\textbf{.70}}{.12}{.68,.72} & \celld{\textbf{.77}}{.08}{.75,.78} & \celld{\textbf{.67}}{.13}{.65,.70} & \celld{\textbf{.79}}{.09}{.78,.81} \\
 \midrule
 \multirow{8}{*}{MC}
- & dialogue mean & \celld{.53}{.05}{.51,.56} & \celld{.12}{.20}{.03,.23} & \celld{.13}{.24}{.02,.27} & \celld{.12}{.20}{.03,.23} & \celld{.46}{.08}{.42,.50} & \celld{.68}{.04}{.65,.69} & \celld{.57}{.12}{.51,.64} & \celld{.70}{.09}{.66,.75} \\
+ & dialogue mean & \celld{.53}{.06}{.51,.55} & \celld{.15}{.26}{.08,.23} & \celld{.11}{.23}{.05,.18} & \celld{.11}{.20}{.06,.17} & \celld{.46}{.09}{.43,.48} & \celld{.68}{.03}{.68,.69} & \celld{.57}{.12}{.54,.60} & \celld{.71}{.09}{.68,.73} \\
 \addlinespace[1.5pt]
- & flat MIL, mean & \celld{.51}{.02}{.50,.52} & \celld{.08}{.16}{.00,.17} & \celld{.10}{.23}{.00,.22} & \celld{.07}{.16}{.00,.16} & \celld{.43}{.04}{.41,.45} & \celld{.66}{.06}{.63,.69} & \celld{.57}{.12}{.51,.63} & \celld{.69}{.13}{.61,.75} \\
+ & flat MIL, mean & \celld{.52}{.05}{.51,.53} & \celld{.12}{.26}{.06,.20} & \celld{.08}{.19}{.04,.14} & \celld{.09}{.18}{.04,.14} & \celld{.45}{.08}{.43,.47} & \celld{.68}{.03}{.68,.69} & \celld{.52}{.11}{.49,.55} & \celld{.63}{.09}{.61,.66} \\
 \addlinespace[1.5pt]
- & flat MIL, attn & \celld{.55}{.05}{.52,.58} & \celld{.42}{.38}{.23,.62} & \celld{.14}{.17}{.06,.23} & \celld{.18}{.18}{.10,.28} & \celld{.50}{.09}{.46,.55} & \celld{.70}{.02}{.70,.71} & \celld{.57}{.09}{.52,.61} & \celld{.71}{.08}{.67,.75} \\
+ & flat MIL, attn & \celld{.53}{.06}{.51,.54} & \celld{.11}{.23}{.06,.18} & \celld{.11}{.22}{.05,.17} & \celld{.10}{.20}{.05,.16} & \celld{.45}{.09}{.43,.48} & \celld{.68}{.04}{.67,.69} & \celld{.52}{.11}{.49,.55} & \celld{.63}{.10}{.61,.66} \\
 \addlinespace[1.5pt]
- & DAMIL-R & \celld{.66}{.15}{.59,.73} & \celld{.52}{.22}{.41,.64} & \celld{.50}{.25}{.38,.62} & \celld{.51}{.23}{.39,.62} & \celld{.65}{.15}{.58,.73} & \celld{.72}{.11}{.66,.77} & \celld{.57}{.18}{.48,.66} & \celld{.73}{.13}{.67,.80} \\
+ & DAMIL-R & \celld{.71}{.10}{.68,.74} & \celld{.61}{.15}{.56,.65} & \celld{.59}{.15}{.54,.63} & \celld{.60}{.15}{.55,.64} & \celld{.71}{.10}{.68,.74} & \celld{.75}{.08}{.73,.78} & \celld{.63}{.17}{.58,.68} & \celld{.76}{.11}{.73,.79} \\
 \addlinespace[1.5pt]
- & SS-DAMIL-R (MH)& \celld{.68}{.12}{.62,.74} & \celld{.55}{.17}{.47,.64} & \celld{.59}{.17}{.50,.67} & \celld{.56}{.16}{.48,.64} & \celld{.68}{.12}{.61,.74} & \celld{.72}{.11}{.66,.77} & \celld{.62}{.15}{.54,.69} & \celld{.75}{.13}{.68,.81} \\
+ & SS-DAMIL-R (MH)& \celld{.65}{.12}{.62,.68} & \celld{.50}{.19}{.45,.55} & \celld{.51}{.22}{.45,.57} & \celld{.50}{.20}{.44,.55} & \celld{.64}{.13}{.61,.68} & \celld{.70}{.10}{.68,.73} & \celld{.59}{.16}{.55,.63} & \celld{.72}{.12}{.69,.75} \\
 \addlinespace[1.5pt]
- & SS-DAMIL-R (GSI)& \celld{.66}{.11}{.60,.72} & \celld{.54}{.16}{.46,.62} & \celld{.53}{.15}{.44,.61} & \celld{.53}{.15}{.45,.60} & \celld{.66}{.11}{.60,.72} & \celld{.71}{.10}{.66,.76} & \celld{.57}{.14}{.50,.65} & \celld{.72}{.13}{.65,.78} \\
+ & SS-DAMIL-R (GSI)& \celld{.66}{.10}{.64,.69} & \celld{.53}{.17}{.48,.57} & \celld{.53}{.19}{.47,.58} & \celld{.52}{.17}{.47,.56} & \celld{.66}{.11}{.63,.68} & \celld{.72}{.08}{.69,.74} & \celld{.57}{.15}{.53,.62} & \celld{.71}{.09}{.68,.73} \\
 \addlinespace[1.5pt]
- & SS-DAMIL-R (Conv)& \celld{.63}{.07}{.60,.67} & \celld{.48}{.20}{.37,.57} & \celld{.43}{.20}{.33,.52} & \celld{.45}{.19}{.34,.54} & \celld{.62}{.10}{.57,.67} & \celld{.71}{.04}{.69,.73} & \celld{.63}{.11}{.57,.68} & \celld{.76}{.09}{.72,.81} \\
+ & SS-DAMIL-R (Conv)& \celld{.62}{.12}{.59,.66} & \celld{.48}{.21}{.42,.54} & \celld{.44}{.23}{.37,.50} & \celld{.44}{.21}{.38,.50} & \celld{.61}{.13}{.58,.65} & \celld{.69}{.10}{.67,.72} & \celld{.56}{.15}{.52,.60} & \celld{.69}{.12}{.66,.72} \\
 \addlinespace[1.5pt]
  & \textbf{TC-MIL} & \celld{\textbf{.73}}{.09}{.70,.75} & \celld{\textbf{.63}}{.20}{.57,.68} & \celld{\textbf{.59}}{.21}{.53,.65} & \celld{\textbf{.60}}{.20}{.54,.65} & \celld{\textbf{.72}}{.11}{.69,.75} & \celld{\textbf{.78}}{.07}{.76,.79} & \celld{\textbf{.71}}{.09}{.68,.74} & \celld{\textbf{.82}}{.05}{.81,.84} \\
 \bottomrule
@@ -858,16 +876,27 @@ folds$\times$seeds).}
 \end{table*}
 
 TC-MIL has the highest mean in every column of both protocols
-(\Cref{tab:cv}), though on the per-run scale its 95\% CIs overlap with the
-role-aware DAMIL-R and MH. The Monte Carlo
-differences are robustly significant across all three primary metrics (Wilcoxon
-and paired $t$, $p<0.05$, down to $p<10^{-3}$ vs.\ the flat baselines); the
-$K$-Fold differences over the role-aware models are smaller and not always
-significant at $n=15$ matched runs.
-The pattern is consistent with the ladder: TC-MIL's largest and most
-significant margins are on the official split and the Monte Carlo internal
-split, and the model leads on every protocol \emph{headline} even where a
-single per-run $K$-Fold contrast is inconclusive.
+(\Cref{tab:cv}). The per-run score distributions still overlap with the
+role-aware DAMIL-R and MH (per-run std $\approx0.12$), but the matched-pair
+tests resolve the means. The baselines are re-run at TC-MIL's full budget and
+aligned run-for-run, so both protocols are matched at every cell: $K$-Fold at
+$n=125$ paired runs (5 repeats $\times$ 5 folds $\times$ 5 seeds) and Monte
+Carlo at $n=50$ (5 splits $\times$ 10 seeds). Against the three flat baselines
+every metric is significant on both protocols (Wilcoxon and paired $t$,
+$p<10^{-3}$; \Cref{tab:cvstats}). Against the role-aware models the picture is
+protocol-dependent for the strongest baseline. Under $K$-Fold TC-MIL is
+significant on all three primary metrics against \emph{every} baseline ---
+DAMIL-R, MH, GSI and Conv included ($p<0.01$, almost always $p<10^{-3}$); the
+only non-significant $K$-Fold cells are DAMIL-R's recall and positive-class F1
+under the paired $t$. Under Monte Carlo, whose larger training splits favour the
+aggregator-route DAMIL-R, that baseline closes the thresholded-metric gap
+(macro-/micro-F1 differences not significant) yet TC-MIL still wins the
+threshold-free ranking (ROC-AUC $p<10^{-3}$, PR-AUC $p<0.01$); against MH, GSI
+and Conv the primary-metric gaps remain significant ($p<0.05$, mostly
+$p<10^{-3}$). The pattern is consistent with the ladder: TC-MIL leads every
+protocol \emph{headline} and wins the ranking metrics throughout, with its
+clearest thresholded margins on the official split and the $K$-Fold internal
+split.
 
 \section{Statistical Significance Summary}
 \label{sec:stats}
@@ -973,9 +1002,10 @@ for both protocols and all eight metrics, consistent with the per-run summary in
 
 \begin{table*}[tp]
 \caption{Paired statistical comparison on the internal cross-validation
-(matched fold$\times$seed runs), TC-MIL ($pos\_weight\!=\!1.0$) vs.\ each
+(matched (repeat,\,fold,\,seed) runs), TC-MIL ($pos\_weight\!=\!1.0$) vs.\ each
 baseline, using the Wilcoxon signed-rank test and the paired $t$-test
-($p$-values, $n=15$ matched runs). ``$^{*}$'' denotes $p<0.05$.}
+($p$-values; $n=125$ matched runs for $K$-Fold, $n=50$ for Monte Carlo).
+``$^{*}$'' denotes $p<0.05$.}
 \label{tab:cvstats}
 \centering
 \scriptsize
@@ -987,74 +1017,74 @@ baseline, using the Wilcoxon signed-rank test and the paired $t$-test
 \textbf{Comparison} & \textbf{Metric} & \textbf{Wilcoxon} & \textbf{paired $t$} & \textbf{Wilcoxon} & \textbf{paired $t$} \\
 \midrule
 \multirow{8}{*}{TC-MIL vs dialogue mean}
- & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.007$^{*}$ & 0.003$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.014$^{*}$ & 0.009$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.023$^{*}$ & 0.015$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.005$^{*}$ & 0.002$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.004$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.008$^{*}$ & 0.004$^{*}$ \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.055 & 0.060 \\
- & ROC-AUC & 0.005$^{*}$ & 0.002$^{*}$ & 0.084 & 0.191 \\
+ & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
 \midrule
 \multirow{8}{*}{TC-MIL vs flat MIL, mean}
- & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.008$^{*}$ & 0.004$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.015$^{*}$ & 0.002$^{*}$ \\
- & Recall & 0.001$^{*}$ & $<$.001$^{*}$ & 0.005$^{*}$ & 0.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.006$^{*}$ & 0.002$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.009$^{*}$ & 0.002$^{*}$ \\
- & micro-F1 & 0.001$^{*}$ & $<$.001$^{*}$ & 0.050$^{*}$ & 0.051 \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.022$^{*}$ & 0.015$^{*}$ \\
- & ROC-AUC & 0.004$^{*}$ & 0.003$^{*}$ & 0.048$^{*}$ & 0.058 \\
+ & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
 \midrule
 \multirow{8}{*}{TC-MIL vs flat MIL, attn}
- & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.004$^{*}$ & 0.001$^{*}$ \\
- & Precision & 0.055 & 0.030$^{*}$ & 0.006$^{*}$ & 0.001$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.003$^{*}$ & $<$.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.003$^{*}$ & $<$.001$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.004$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & 0.001$^{*}$ & $<$.001$^{*}$ & 0.033$^{*}$ & 0.031$^{*}$ \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & 0.030$^{*}$ & 0.019$^{*}$ \\
- & ROC-AUC & 0.003$^{*}$ & $<$.001$^{*}$ & 0.027$^{*}$ & 0.034$^{*}$ \\
+ & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
 \midrule
 \multirow{8}{*}{TC-MIL vs DAMIL-R}
- & UAR & 0.024$^{*}$ & 0.015$^{*}$ & 0.887 & 0.973 \\
- & Precision & 0.019$^{*}$ & 0.015$^{*}$ & 0.394 & 0.892 \\
- & Recall & 0.026$^{*}$ & 0.024$^{*}$ & 0.944 & 0.571 \\
- & pos-F1 & 0.019$^{*}$ & 0.014$^{*}$ & 0.910 & 0.645 \\
- & macro-F1 & 0.019$^{*}$ & 0.014$^{*}$ & 0.910 & 0.869 \\
- & micro-F1 & 0.020$^{*}$ & 0.016$^{*}$ & 0.569 & 0.421 \\
- & PR-AUC & 0.003$^{*}$ & 0.004$^{*}$ & 0.454 & 0.456 \\
- & ROC-AUC & 0.015$^{*}$ & 0.012$^{*}$ & 0.349 & 0.689 \\
+ & UAR & 0.226 & 0.369 & 0.003$^{*}$ & 0.006$^{*}$   \\
+ & Precision & 0.179 & 0.542 & $<$.001$^{*}$ & 0.008$^{*}$   \\
+ & Recall & 0.804 & 0.905 & 0.081 & 0.393   \\
+ & pos-F1 & 0.382 & 0.921 & 0.007$^{*}$ & 0.113   \\
+ & macro-F1 & 0.364 & 0.638 & 0.003$^{*}$ & 0.013$^{*}$   \\
+ & micro-F1 & 0.113 & 0.143 & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & PR-AUC & 0.004$^{*}$ & 0.004$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
 \midrule
 \multirow{8}{*}{TC-MIL vs SS-DAMIL-R (MH)}
- & UAR & 0.028$^{*}$ & 0.023$^{*}$ & 0.244 & 0.308 \\
- & Precision & 0.039$^{*}$ & 0.026$^{*}$ & 0.268 & 0.508 \\
- & Recall & 0.112 & 0.054 & 0.888 & 0.851 \\
- & pos-F1 & 0.028$^{*}$ & 0.026$^{*}$ & 0.561 & 0.902 \\
- & macro-F1 & 0.033$^{*}$ & 0.025$^{*}$ & 0.454 & 0.482 \\
- & micro-F1 & 0.030$^{*}$ & 0.029$^{*}$ & 0.056 & 0.036$^{*}$ \\
- & PR-AUC & 0.055 & 0.037$^{*}$ & 0.083 & 0.173 \\
- & ROC-AUC & 0.053 & 0.054 & 0.105 & 0.227 \\
+ & UAR & 0.002$^{*}$ & 0.002$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Precision & 0.002$^{*}$ & 0.005$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Recall & 0.049$^{*}$ & 0.070 & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & pos-F1 & 0.009$^{*}$ & 0.024$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & macro-F1 & 0.003$^{*}$ & 0.004$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
 \midrule
 \multirow{8}{*}{TC-MIL vs SS-DAMIL-R (GSI)}
- & UAR & 0.004$^{*}$ & $<$.001$^{*}$ & 0.326 & 0.485 \\
- & Precision & 0.004$^{*}$ & $<$.001$^{*}$ & 0.345 & 0.540 \\
- & Recall & 0.010$^{*}$ & 0.007$^{*}$ & 0.755 & 0.494 \\
- & pos-F1 & 0.004$^{*}$ & $<$.001$^{*}$ & 0.807 & 0.750 \\
- & macro-F1 & 0.004$^{*}$ & $<$.001$^{*}$ & 0.600 & 0.709 \\
- & micro-F1 & 0.004$^{*}$ & 0.001$^{*}$ & 0.034$^{*}$ & 0.037$^{*}$ \\
- & PR-AUC & 0.004$^{*}$ & 0.002$^{*}$ & 0.188 & 0.145 \\
- & ROC-AUC & 0.015$^{*}$ & 0.011$^{*}$ & 0.524 & 0.677 \\
+ & UAR & 0.004$^{*}$ & 0.002$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Precision & 0.002$^{*}$ & 0.008$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Recall & 0.163 & 0.108 & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & pos-F1 & 0.026$^{*}$ & 0.038$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & macro-F1 & 0.008$^{*}$ & 0.005$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
 \midrule
 \multirow{8}{*}{TC-MIL vs SS-DAMIL-R (Conv)}
- & UAR & 0.001$^{*}$ & $<$.001$^{*}$ & 0.330 & 0.200 \\
- & Precision & 0.004$^{*}$ & 0.006$^{*}$ & 0.382 & 0.359 \\
- & Recall & 0.001$^{*}$ & 0.002$^{*}$ & 0.593 & 0.504 \\
- & pos-F1 & 0.002$^{*}$ & 0.001$^{*}$ & 0.470 & 0.424 \\
- & macro-F1 & 0.002$^{*}$ & $<$.001$^{*}$ & 0.433 & 0.270 \\
- & micro-F1 & 0.002$^{*}$ & $<$.001$^{*}$ & 0.068 & 0.073 \\
- & PR-AUC & 0.055 & 0.020$^{*}$ & 0.073 & 0.194 \\
- & ROC-AUC & 0.083 & 0.035$^{*}$ & 0.083 & 0.166 \\
+ & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
+ & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -1204,8 +1234,11 @@ the same PHQ-style questions, in the same order, for every subject --- they are
 near-constant across classes and cannot by themselves discriminate the label;
 they only contextualise the participant's own answers. Stripped of that context the model leans
 \emph{more} on position (its position--attention correlation rises from $+0.03$
-to $+0.32$, \Cref{tab:interp}), the opposite of a model that had been ignoring
-the prompts. The surviving signal is answer-driven: with the prompts gone the
+to $+0.32$, \Cref{tab:interp}) --- the opposite of what a prompt-shortcut model
+would show, which relies on the late mental-health-question region while the
+prompts are present and collapses once they are removed. Here position-reliance
+appears only \emph{after} the prompts are gone, confirming the deployed model
+used them as context rather than as a positional shortcut. The surviving signal is answer-driven: with the prompts gone the
 occlusion attribution (\Cref{fig:occ}b) lands on the participant's own symptom
 disclosures with faithfulness unchanged ($\rho=+0.99$). The bias control is thus
 the near-zero position--attention correlation of the deployed model, not a
@@ -1279,6 +1312,7 @@ peakier, more selectable attention; de-biasing improves the decision but
 slightly blurs the per-chunk attribution. We therefore report the F1
 improvement and the faithfulness behaviour as separate, independent findings.
 
+\iffalse
 \section{Does Fine-Tuning the Encoder Help?}
 \label{sec:finetune}
 
@@ -1625,14 +1659,14 @@ the test split was spent, and prevents us from over-claiming a parameter-efficie
 fine-tuning win that the data does not support. We therefore retain the frozen
 encoder as the deployed system; the remaining headroom (\Cref{tab:levers}) is not
 recoverable by fine-tuning the sentence encoder on a 107-interview corpus.
-
+\fi
 \section{Cross-Corpus Generalization: Zero-Shot Transfer to E-DAIC}
 \label{sec:edaic}
 
 Every result so far is within DAIC-WOZ: train, select, and test on disjoint
 splits of one corpus. A more stringent question for a clinical screen is whether the
 model transfers to a \emph{different} corpus it never saw --- a different cohort,
-a different ASR front end, a different recording protocol. We test this directly
+a different ASR (automatic speech recognition) front end, a different recording protocol. We test this directly
 and \emph{zero-shot}: the DAIC-WOZ model is frozen and run, with no adaptation
 and no target-side threshold tuning, on E-DAIC \cite{ringeval2019avec}, the
 AVEC~2019 successor corpus.
