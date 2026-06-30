@@ -142,12 +142,23 @@ exploiting the interviewer-prompt shortcut. Never touches the test split.
 
 ```bash
 bash scripts/experiments/design_ablations.sh   # encoder / temporal / window / reg sweeps (dev, 5-seed)
-uv run python src/evaluation/eval_legacy.py     # dialogue-mean → flat-MIL → DAMIL-R → SS-DAMIL-R → TC-MIL
+
+# Legacy architecture ladder (baselines): dialogue-mean → flat-MIL → DAMIL-R → SS-DAMIL-R.
+# Run at TC-MIL's matched CV budget so the paired tests align run-for-run.
+uv run python src/evaluation/eval_legacy.py --data_dir data/daic-woz \
+    --protocols official kfold --n_seeds 30 --n_repeats 5 --cv_seeds 5 --n_splits 5 \
+    --output_root results/baselines/legacy_aligned
+# Monte-Carlo baselines (5 splits × 10 seeds), aligned to TC-MIL's mc_pw1:
+uv run python src/evaluation/eval_legacy.py --data_dir data/daic-woz \
+    --protocols mc --cv_seeds 10 --n_splits 5 \
+    --output_root results/cross_validation/legacy_mc_aligned
 ```
 
 `scripts/experiments/pw_sweep30.sh` and `scripts/experiments/prob_levers.sh` run
 the pos-weight sweep and the checkpointed-headline + MC-dropout + multi-granularity
-variants. All are standalone and resumable (finished runs are skipped).
+variants. All are standalone and resumable (finished runs are skipped). Regenerate
+the significance tables (ladder + CV, all metrics) with
+`uv run python -m src.statistics.stats_ablation --protocols kfold mc --independent`.
 
 ### 4e. Zero-shot E-DAIC transfer
 
@@ -234,6 +245,9 @@ under `<output_dir>/checkpoints/`:
   `fold<f>_seed<s>.pt` (CV); **only trainable** params (LoRA adapters / bias /
   unfrozen layers + MIL head). Reload onto a fresh `FTTCMIL(config)` with
   `load_state_dict(..., strict=False)`.
+
+[This](https://drive.google.com/drive/folders/1IWKe75-f6cKfh6agss5QC1OMXZC0bYcr?usp=sharing) folder holds the single-model track
+(headline + explored levers) with a reload example — see `README.md` inside it.
 
 **Leakage guarantees:** splits are subject-disjoint by construction
 (`assert_no_leakage`); CV fine-tunes the encoder **inside each fold** only;
