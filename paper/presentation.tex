@@ -88,8 +88,8 @@
         \item Numbers leak via test-tuned thresholds,
         \item pooled cross-validation that shares subjects,
         \item the \emph{positional} interviewer-prompt shortcut (Burdisso et al.):
-              keying on the late interview region where the mental-health questions
-              sit $\Rightarrow$ macro-F1 0.90.
+              exploiting the fixed position of the late mental-health questions
+              inflates macro-F1 from 0.85 (patient-only) to 0.90.
         \item \bad{Reported numbers are hard to trust and to compare.}
       \end{itemize}
     \end{column}
@@ -289,8 +289,7 @@
 
 \begin{frame}{The ranking holds up internally}
   \begin{itemize}
-    \item Cross-validate on the training pool only (test excluded), baselines
-          re-run at TC-MIL's full budget and matched run-for-run:
+    \item Cross-validate on the training pool only (test excluded):
           repeated $K$-fold ($n{=}125$) and Monte-Carlo ($n{=}50$).
     \item TC-MIL has the \good{highest mean in every column} of both protocols
           and wins the \good{ROC-AUC ranking throughout}.
@@ -343,9 +342,11 @@
     \item Retrain with \emph{all interviewer lines removed} (participant-only):
           every metric \bad{drops} (AUC $0.868\!\rightarrow\!0.801$) \emph{and} the
           position--attention correlation \emph{rises} $+0.03\!\rightarrow\!+0.32$.
-    \item[$\Rightarrow$] Stripped of context the model leans \emph{more} on position ---
-          the opposite of one that had been riding the shortcut.
-    \item[$\Rightarrow$] Prompts supply legitimate \emph{topical context}, not a removable shortcut.
+    \item[$\Rightarrow$] Position-reliance appears \emph{only after} the prompts are gone ---
+          the opposite of a shortcut-rider (which keys on the prompts \emph{while present}
+          and would collapse without them).
+    \item[$\Rightarrow$] And DAIC's prompts are near-constant across classes, so they
+          \emph{cannot} discriminate the label: the signal they add is \good{topical context}.
   \end{itemize}
 \end{frame}
 
@@ -408,8 +409,9 @@
         \item Zero-shot transfer to E-DAIC (AVEC 2019): frozen model, no target adaptation, no threshold tuning.
         \item The model \good{transfers} --- and \emph{order-free} pooling transfers best
               (AUC \num{0.716}) over the temporal GRU (\num{0.662}).
-        \item Lesson: the best \emph{in-domain} config is \bad{not} the best \emph{transfer}
-              config --- generalisation-critical choices must be validated across corpora.
+        \item Lesson: the head that \emph{tops the dev split} (GRU, dev AUC \num{0.900})
+              is \bad{worse on every held-out test} --- DAIC test \emph{and} zero-shot
+              E-DAIC --- so dev AUC mis-selects; order-free is the more robust bias under shift.
       \end{itemize}
     \end{column}
     \begin{column}{0.5\textwidth}
@@ -428,7 +430,7 @@
         \bottomrule
       \end{tabular}
       \\[3pt]{\scriptsize 30-seed mean$\pm$std; E-DAIC adds subject-level
-       bootstrap 95\% [CI] (56 test subjects). GRU wins DAIC \emph{dev} (.900), loses transfer.}
+       bootstrap 95\% [CI] (56 test subjects). GRU tops DAIC \emph{dev} (.900) but is worse on both tests.}
     \end{column}
   \end{columns}
 \end{frame}

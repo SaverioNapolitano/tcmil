@@ -119,8 +119,9 @@ cross-validation), with different F1 variants (positive-class vs.\ macro
 vs.\ micro), and frequently with information leakage: thresholds tuned on test
 labels, probability ensembles over folds that share subjects, or reliance on
 the interviewer-prompt shortcut that Burdisso et al.\ \cite{burdisso2024}
-showed can be exploited to reach macro-F1 0.90 by feeding the model the
-therapist's mental-health questions. A method that is not measured under a
+identified, where exploiting the fixed position of the interviewer's
+mental-health questions inflates macro-F1 from $0.85$ (patient-only) to $0.90$
+(\Cref{sec:related}). A method that is not measured under a
 fixed, leakage-free protocol cannot be compared on equal terms with the literature.
 
 \textbf{Contributions.} This paper makes three contributions.
@@ -328,7 +329,9 @@ clinical read-out probed in \Cref{sec:interpret}.
 
 \subsection{Loss and the positive class weight}
 The main objective is a binary cross-entropy on the bag logit plus the
-weighted auxiliary loss. The DAIC-WOZ training split is imbalanced
+weighted auxiliary loss, the latter an eight-way multi-label binary
+cross-entropy over the binarised PHQ-8 symptom logits (weight $\lambda=0.3$).
+The DAIC-WOZ training split is imbalanced
 ($\approx$28\% positive), and a class weight of (neg/pos)$\approx$2.5 is the
 natural default --- but it biases the model toward recall. As
 \Cref{sec:ablation} shows, setting this weight to 1.0 is the single
@@ -386,8 +389,7 @@ order-free (plain) attention head fixed a priori for faithful attribution, the
 interpretability and interviewer-prompt probes use the selective BiGRU head whose
 attention is informative, and the cross-corpus transfer uses a participant-only
 variant matched to E-DAIC's un-diarized format. \Cref{tab:config} states, for each
-results table, which head and seed budget it uses and why, so that no number is
-read against the wrong configuration.
+results table, which head and seed budget it uses and why.
 
 \begin{table}[t]
 \caption{Which configuration each result uses. ``Plain'' is the order-free
@@ -543,7 +545,10 @@ here.
 prevalence threshold. Each cell is the 30-seed per-seed mean$\,{\pm}\,$std
 (top) and the subject-level bootstrap 95\% CI (bottom, 2000 resamples of the
 47 test subjects). Instances are single utterances except for TC-MIL
-(dialogue chunks).}
+(dialogue chunks). ``$^{*}$'' on a TC-MIL cell marks that TC-MIL significantly
+exceeds \emph{every} baseline at that metric ($p<0.05$ under both Welch's
+$t$-test and the Mann--Whitney $U$ test over the 30 per-seed scores); PR-AUC is
+the only metric not significant against all role-aware baselines.}
 \label{tab:ladder}
 \centering
 \scriptsize
@@ -566,7 +571,7 @@ SS-DAMIL-R (GSI)& \celld{.66}{.06}{.53,.84} & \celld{.53}{.09}{.31,.83} & \celld
 \addlinespace[2pt]
 SS-DAMIL-R (Conv)& \celld{.65}{.06}{.51,.83} & \celld{.53}{.09}{.29,.83} & \celld{.50}{.07}{.29,.78} & \celld{.51}{.07}{.30,.74} & \celld{.65}{.07}{.51,.82} & \celld{.71}{.07}{.60,.85} & \celld{.61}{.09}{.42,.86} & \celld{.75}{.08}{.65,.91} \\
 \midrule
-\textbf{TC-MIL} & \celld{\textbf{.77}}{.03}{.59,.92} & \celld{\textbf{.70}}{.04}{.36,.93} & \celld{\textbf{.66}}{.04}{.40,.91} & \celld{\textbf{.68}}{.04}{.41,.86} & \celld{\textbf{.77}}{.03}{.59,.90} & \celld{\textbf{.81}}{.02}{.66,.91} & \celld{\textbf{.62}}{.02}{.42,.93} & \celld{\textbf{.86}}{.01}{.75,.96} \\
+\textbf{TC-MIL} & \celld{\textbf{.77}$^{*}$}{.03}{.59,.92} & \celld{\textbf{.70}$^{*}$}{.04}{.36,.93} & \celld{\textbf{.66}$^{*}$}{.04}{.40,.91} & \celld{\textbf{.68}$^{*}$}{.04}{.41,.86} & \celld{\textbf{.77}$^{*}$}{.03}{.59,.90} & \celld{\textbf{.81}$^{*}$}{.02}{.66,.91} & \celld{\textbf{.62}}{.02}{.42,.93} & \celld{\textbf{.86}$^{*}$}{.01}{.75,.96} \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -592,8 +597,7 @@ TC-MIL is not only higher in the mean but also more stable: its AUC standard
 deviation is roughly five times tighter than that of the best legacy model.
 Against the role-aware models the per-run cross-validation differences are not
 always significant (\Cref{sec:internal}); TC-MIL's clearest margins are on the
-official split, where every per-seed gap to a baseline is significant
-(\Cref{tab:stats}), and on the $K$-Fold internal split.
+official split and the $K$-Fold internal split.
 
 \Cref{fig:forest} shows the official-split macro-F1 of the whole ladder with
 subject-bootstrap 95\% CIs and the reference baseline \cite{milintsevich2023}:
@@ -795,12 +799,16 @@ and of the test set: it is the only pooling whose per-chunk attribution is faith
 (\Cref{sec:interpret}), a core requirement of our claim.
 The GRU head, which forgoes that faithfulness, is therefore not adopted as the
 headline model. The held-out official test then independently confirms that the
-plain head also generalises best. Third, granularity and
-regularisation are flat (dev macro-F1 0.73--0.82): $w4/s2$ matches the larger
-$w6/s3$, and dropout, projection width and auxiliary weight barely move the
-score. The auxiliary symptom loss can even be dropped with no dev cost, but we
-retain it for the clinical read-out (\Cref{sec:interpret}) at negligible
-expense. Crucially, the configuration was frozen by this pre-registered,
+plain head also generalises best. Third, $w4/s2$ matches the larger $w6/s3$, and the regularisation settings move
+the dev \emph{AUC} negligibly ($0.908$--$0.914$). They do shift the thresholded
+dev metrics more --- dropout 0.3/0.5 and aux-weight 0.0/0.5 edge the base on
+macro- and positive-class F1 by $\sim$0.02--0.05 --- but every such gap is within
+one seed std at $n{=}5$ and the $n{=}35$ dev thresholded metrics are quantised,
+so we treat them as noise rather than chase the dev argmax (the same
+pre-registration stance applied to the head above). The base ($w4/s2$,
+dropout 0.4) is therefore kept as a sensible default. The auxiliary loss, though
+droppable at no dev-AUC cost (and a slightly higher dev F1), is retained for the
+clinical read-out (\Cref{sec:interpret}). Crucially, the configuration was frozen by this pre-registered,
 dev-only procedure before the single official-test evaluation. Where the dev
 argmax would prefer the GRU head, we do \emph{not} adopt it:
 the plain head is fixed a priori on the principled, test-independent grounds of
@@ -829,7 +837,13 @@ is not required for a ranking check, and the official-split tables retain it.
 architecture ladder, per-run single model, at the
 transductive-prevalence threshold. Each cell is the mean$\,{\pm}\,$std (top)
 and the 95\% CI of the mean (bottom, bootstrap over the per-run
-repeats$\times$folds$\times$seeds).}
+repeats$\times$folds$\times$seeds). ``$^{*}$'' on a TC-MIL cell marks that
+TC-MIL significantly exceeds \emph{every} baseline at that metric and protocol
+($p<0.05$ under both the Wilcoxon signed-rank and paired $t$-tests over the
+matched runs; $n=125$ K-Fold, $n=50$ MC). Under Monte Carlo only the
+threshold-free AUCs clear this bar: the thresholded-metric gaps stay significant
+against the flat baselines (and most SS-DAMIL-R variants) but tie against the
+strongest baseline, DAMIL-R.}
 \label{tab:cv}
 \centering
 \scriptsize
@@ -853,7 +867,7 @@ repeats$\times$folds$\times$seeds).}
 \addlinespace[1.5pt]
  & SS-DAMIL-R (Conv)& \celld{.63}{.11}{.61,.65} & \celld{.49}{.19}{.45,.52} & \celld{.45}{.21}{.42,.49} & \celld{.45}{.19}{.42,.49} & \celld{.62}{.12}{.60,.64} & \celld{.70}{.09}{.69,.72} & \celld{.55}{.15}{.52,.57} & \celld{.69}{.13}{.67,.71} \\
 \addlinespace[1.5pt]
- & \textbf{TC-MIL} & \celld{\textbf{.70}}{.11}{.69,.72} & \celld{\textbf{.59}}{.20}{.56,.63} & \celld{\textbf{.55}}{.21}{.52,.59} & \celld{\textbf{.56}}{.20}{.53,.60} & \celld{\textbf{.70}}{.12}{.68,.72} & \celld{\textbf{.77}}{.08}{.75,.78} & \celld{\textbf{.67}}{.13}{.65,.70} & \celld{\textbf{.79}}{.09}{.78,.81} \\
+ & \textbf{TC-MIL} & \celld{\textbf{.70}$^{*}$}{.11}{.69,.72} & \celld{\textbf{.59}$^{*}$}{.20}{.56,.63} & \celld{\textbf{.55}}{.21}{.52,.59} & \celld{\textbf{.56}}{.20}{.53,.60} & \celld{\textbf{.70}$^{*}$}{.12}{.68,.72} & \celld{\textbf{.77}$^{*}$}{.08}{.75,.78} & \celld{\textbf{.67}$^{*}$}{.13}{.65,.70} & \celld{\textbf{.79}$^{*}$}{.09}{.78,.81} \\
 \midrule
 \multirow{8}{*}{MC}
  & dialogue mean & \celld{.53}{.06}{.51,.55} & \celld{.15}{.26}{.08,.23} & \celld{.11}{.23}{.05,.18} & \celld{.11}{.20}{.06,.17} & \celld{.46}{.09}{.43,.48} & \celld{.68}{.03}{.68,.69} & \celld{.57}{.12}{.54,.60} & \celld{.71}{.09}{.68,.73} \\
@@ -870,224 +884,21 @@ repeats$\times$folds$\times$seeds).}
 \addlinespace[1.5pt]
  & SS-DAMIL-R (Conv)& \celld{.62}{.12}{.59,.66} & \celld{.48}{.21}{.42,.54} & \celld{.44}{.23}{.37,.50} & \celld{.44}{.21}{.38,.50} & \celld{.61}{.13}{.58,.65} & \celld{.69}{.10}{.67,.72} & \celld{.56}{.15}{.52,.60} & \celld{.69}{.12}{.66,.72} \\
 \addlinespace[1.5pt]
- & \textbf{TC-MIL} & \celld{\textbf{.73}}{.09}{.70,.75} & \celld{\textbf{.63}}{.20}{.57,.68} & \celld{\textbf{.59}}{.21}{.53,.65} & \celld{\textbf{.60}}{.20}{.54,.65} & \celld{\textbf{.72}}{.11}{.69,.75} & \celld{\textbf{.78}}{.07}{.76,.79} & \celld{\textbf{.71}}{.09}{.68,.74} & \celld{\textbf{.82}}{.05}{.81,.84} \\
+ & \textbf{TC-MIL} & \celld{\textbf{.73}}{.09}{.70,.75} & \celld{\textbf{.63}}{.20}{.57,.68} & \celld{\textbf{.59}}{.21}{.53,.65} & \celld{\textbf{.60}}{.20}{.54,.65} & \celld{\textbf{.72}}{.11}{.69,.75} & \celld{\textbf{.78}}{.07}{.76,.79} & \celld{\textbf{.71}$^{*}$}{.09}{.68,.74} & \celld{\textbf{.82}$^{*}$}{.05}{.81,.84} \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-TC-MIL has the highest mean in every column of both protocols
-(\Cref{tab:cv}). The per-run score distributions still overlap with the
-role-aware DAMIL-R and MH (per-run std $\approx0.12$), but the matched-pair
-tests resolve the means. The baselines are re-run at TC-MIL's full budget and
-aligned run-for-run, so both protocols are matched at every cell: $K$-Fold at
-$n=125$ paired runs (5 repeats $\times$ 5 folds $\times$ 5 seeds) and Monte
-Carlo at $n=50$ (5 splits $\times$ 10 seeds). Against the three flat baselines
-every metric is significant on both protocols (Wilcoxon and paired $t$,
-$p<10^{-3}$; \Cref{tab:cvstats}). Against the role-aware models the picture is
-protocol-dependent for the strongest baseline. Under $K$-Fold TC-MIL is
-significant on all three primary metrics against \emph{every} baseline ---
-DAMIL-R, MH, GSI and Conv included ($p<0.01$, almost always $p<10^{-3}$); the
-only non-significant $K$-Fold cells are DAMIL-R's recall and positive-class F1
-under the paired $t$. Under Monte Carlo, whose larger training splits favour the
-aggregator-route DAMIL-R, that baseline closes the thresholded-metric gap
-(macro-/micro-F1 differences not significant) yet TC-MIL still wins the
-threshold-free ranking (ROC-AUC $p<10^{-3}$, PR-AUC $p<0.01$); against MH, GSI
-and Conv the primary-metric gaps remain significant ($p<0.05$, mostly
-$p<10^{-3}$). The pattern is consistent with the ladder: TC-MIL leads every
-protocol \emph{headline} and wins the ranking metrics throughout, with its
+TC-MIL has the highest mean in every column of both protocols (\Cref{tab:cv}).
+The per-run score distributions overlap with the role-aware DAMIL-R and MH
+(per-run std $\approx0.12$), but the matched-pair tests --- whose significance is
+marked by the asterisks in \Cref{tab:cv} --- resolve the means: TC-MIL
+significantly exceeds every baseline on the primary metrics under $K$-Fold and on
+the threshold-free ranking throughout, the strongest baseline (DAMIL-R) closing
+the thresholded gap only under Monte Carlo's larger training splits. The pattern
+matches the ladder: TC-MIL leads every protocol \emph{headline}, with its
 clearest thresholded margins on the official split and the $K$-Fold internal
 split.
-
-\section{Statistical Significance Summary}
-\label{sec:stats}
-
-\Cref{tab:stats} reports, for each TC-MIL-vs-baseline comparison and each of
-the eight metrics, the two-sided $p$-value of Welch's $t$-test and of the
-Mann--Whitney $U$ test over the 30 per-seed scores. Because the two models'
-30 scores come from different random seeds, the samples are \emph{independent};
-Welch's $t$-test (unequal variance) therefore replaces the paired $t$-test, and
-the rank-based Mann--Whitney $U$ test is reported alongside it as a
-distribution-free check. TC-MIL improves every metric against every baseline,
-and the improvement is significant ($p<0.05$, almost always $p<0.001$) on all
-metrics except PR-AUC against the three role-aware models (DAMIL-R, MH, Conv),
-where the gain in ranking precision is small.
-
-\begin{table}[t]
-\caption{Statistical comparison between TC-MIL ($pos\_weight\!=\!1.0$) and each
-baseline architecture on the official split, using Welch's $t$-test and the
-Mann--Whitney $U$ test ($p$-values over the 30 per-seed scores). ``$^{*}$''
-denotes $p<0.05$. Acc $\equiv$ micro-F1.}
-\label{tab:stats}
-\centering
-\scriptsize
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}llcc@{}}
-\toprule
-\textbf{Comparison} & \textbf{Metric} & \textbf{Welch's $t$} & \textbf{Mann--Whitney $U$} \\
-\midrule
-\multirow{8}{*}{TC-MIL vs dialogue mean} & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
-\midrule
-\multirow{8}{*}{TC-MIL vs flat MIL, mean} & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
-\midrule
-\multirow{8}{*}{TC-MIL vs flat MIL, attn} & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
-\midrule
-\multirow{8}{*}{TC-MIL vs DAMIL-R} & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & PR-AUC & 0.055 & 0.176 \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
-\midrule
-\multirow{8}{*}{TC-MIL vs SS-DAMIL-R (MH)} & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & PR-AUC & 0.397 & 0.311 \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
-\midrule
-\multirow{8}{*}{TC-MIL vs SS-DAMIL-R (GSI)} & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & PR-AUC & 0.010$^{*}$ & 0.027$^{*}$ \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
-\midrule
-\multirow{8}{*}{TC-MIL vs SS-DAMIL-R (Conv)} & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ \\
- & PR-AUC & 0.527 & 0.751 \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-A
-one-sample $t$-test of the 30 per-seed macro-F1 values against the baseline's (whose per-subject scores are not public) \cite{milintsevich2023}
-0.739 gives $p=3.8\!\times\!10^{-7}$.
-
-For cross-validation the matched (fold, seed) metrics are \emph{paired}, so the
-Wilcoxon signed-rank and paired $t$-tests apply; \Cref{tab:cvstats} reports both,
-for both protocols and all eight metrics, consistent with the per-run summary in
-\Cref{sec:internal}.
-
-\begin{table*}[tp]
-\caption{Paired statistical comparison on the internal cross-validation
-(matched (repeat,\,fold,\,seed) runs), TC-MIL ($pos\_weight\!=\!1.0$) vs.\ each
-baseline, using the Wilcoxon signed-rank test and the paired $t$-test
-($p$-values; $n=125$ matched runs for $K$-Fold, $n=50$ for Monte Carlo).
-``$^{*}$'' denotes $p<0.05$.}
-\label{tab:cvstats}
-\centering
-\scriptsize
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}ll cc cc@{}}
-\toprule
-& & \multicolumn{2}{c}{\textbf{Monte Carlo}} & \multicolumn{2}{c}{\textbf{$K$-Fold}} \\
-\cmidrule(lr){3-4}\cmidrule(lr){5-6}
-\textbf{Comparison} & \textbf{Metric} & \textbf{Wilcoxon} & \textbf{paired $t$} & \textbf{Wilcoxon} & \textbf{paired $t$} \\
-\midrule
-\multirow{8}{*}{TC-MIL vs dialogue mean}
- & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
-\midrule
-\multirow{8}{*}{TC-MIL vs flat MIL, mean}
- & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
-\midrule
-\multirow{8}{*}{TC-MIL vs flat MIL, attn}
- & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
-\midrule
-\multirow{8}{*}{TC-MIL vs DAMIL-R}
- & UAR & 0.226 & 0.369 & 0.003$^{*}$ & 0.006$^{*}$   \\
- & Precision & 0.179 & 0.542 & $<$.001$^{*}$ & 0.008$^{*}$   \\
- & Recall & 0.804 & 0.905 & 0.081 & 0.393   \\
- & pos-F1 & 0.382 & 0.921 & 0.007$^{*}$ & 0.113   \\
- & macro-F1 & 0.364 & 0.638 & 0.003$^{*}$ & 0.013$^{*}$   \\
- & micro-F1 & 0.113 & 0.143 & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & PR-AUC & 0.004$^{*}$ & 0.004$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
-\midrule
-\multirow{8}{*}{TC-MIL vs SS-DAMIL-R (MH)}
- & UAR & 0.002$^{*}$ & 0.002$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Precision & 0.002$^{*}$ & 0.005$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Recall & 0.049$^{*}$ & 0.070 & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & pos-F1 & 0.009$^{*}$ & 0.024$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & macro-F1 & 0.003$^{*}$ & 0.004$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
-\midrule
-\multirow{8}{*}{TC-MIL vs SS-DAMIL-R (GSI)}
- & UAR & 0.004$^{*}$ & 0.002$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Precision & 0.002$^{*}$ & 0.008$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Recall & 0.163 & 0.108 & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & pos-F1 & 0.026$^{*}$ & 0.038$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & macro-F1 & 0.008$^{*}$ & 0.005$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
-\midrule
-\multirow{8}{*}{TC-MIL vs SS-DAMIL-R (Conv)}
- & UAR & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Precision & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & Recall & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & pos-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & macro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & micro-F1 & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & PR-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
- & ROC-AUC & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$ & $<$.001$^{*}$   \\
-\bottomrule
-\end{tabular}
-\end{table*}
 
 \section{Interpretability}
 \label{sec:interpret}
@@ -1106,8 +917,9 @@ Attention weights are averaged over the seed ensemble, and a cross-seed
 per-seed attention vectors. We do not assume attention is an explanation
 \cite{jain2019}; we validate it against occlusion with the ERASER metrics
 \cite{deyoung2020}: comprehensiveness@$k$ (the probability drop when the top-$k$
-attended chunks are removed), sufficiency@$k$, and the Spearman correlation
-between each chunk's attention and its leave-one-out $\Delta$probability.
+attended chunks are removed), sufficiency@$k$ (the drop when only the top-$k$ are
+kept), and the Spearman correlation between each chunk's attention and its
+leave-one-out $\Delta$probability.
 
 \Cref{tab:interp} reports the aggregate metrics. Sufficiency@$k$ is negative for
 both models: the top-$k$ attended chunks alone already drive the probability to
@@ -1191,16 +1003,15 @@ prompts available the attribution lands on the participant's own disclosures
 \label{fig:occ}
 \end{figure*}
 
-\begin{table}[htbp]
-\caption{Interpretability, 5-seed (dialogue model). Dial.\ vs.\
+\begin{table}[t]
+\caption{Interpretability, 5-seed (GRU head). Dial.\ vs.\
 participant-only (interviewer lines removed). For the two metrics with a
 per-interview distribution (stability, attention$\leftrightarrow$occlusion
 correlation) we give mean$\pm$std over interviews; the occlusion correlation
-is tested against 0 by a one-sample $t$-test ($^{**}$ $p<0.01$). The remaining
-rows are 5-seed aggregate point estimates without a per-unit distribution, so
-no test is attached. Comprehensiveness@$k$ is the probability drop when the
-top-$k$ attended chunks are removed; sufficiency@$k$ is the probability drop when
-only the top-$k$ are kept.}
+is tested against 0 by a one-sample $t$-test ($^{*}$ $p<0.05$). The remaining
+rows are 5-seed aggregate point estimates, so no test is attached.
+Interviewer-kw attn.\ mass is the fraction of total attention placed on chunks
+containing the interviewer's mental-health-question keywords.}
 \label{tab:interp}
 \centering
 \small
@@ -1210,7 +1021,7 @@ only the top-$k$ are kept.}
 \textbf{Metric} & \textbf{Dial.} & \textbf{P-only} \\
 \midrule
 Attention stability (Spearman) & $0.77${\tiny$\pm$.09} & $0.66${\tiny$\pm$.14} \\
-Attn$\leftrightarrow$occlusion corr. & $-0.23${\tiny$\pm$.40}$^{**}$ & $0.00$ \\
+Attn$\leftrightarrow$occlusion corr. & $-0.23${\tiny$\pm$.40}$^{*}$ & $0.00$ \\
 Comprehensiveness @1/@5 & .09/.28 & .06/.29 \\
 Sufficiency @1/@5 & $-.21$/$-.15$ & $-.24$/$-.14$ \\
 Position--attention corr. & $+0.03$ & $+0.32$ \\
@@ -1228,11 +1039,14 @@ interview, not concentrated in the late mental-health-question region that
 exploiting the interviewer prompts, we retrain with all interviewer lines
 removed (\texttt{participant-only}). This \emph{degrades} every metric on the
 official test split (AUC $0.868\!\to\!0.801$, macro-F1 $0.763\!\to\!0.668$;
-\Cref{tab:ponly}), so the interviewer turns supply legitimate topical context
-rather than a removable shortcut. Because DAIC's prompts are semi-structured ---
-the same PHQ-style questions, in the same order, for every subject --- they are
-near-constant across classes and cannot by themselves discriminate the label;
-they only contextualise the participant's own answers. Stripped of that context the model leans
+\Cref{tab:ponly}), so the interviewer turns do contribute signal --- but
+degradation alone cannot say whether that signal is a shortcut or legitimate
+context, since removing either would hurt. What settles it is the nature of the
+prompts: because DAIC's are semi-structured --- the same PHQ-style questions, in
+the same order, for every subject --- they are near-constant across classes and
+so cannot by themselves discriminate the label. The signal they add can
+therefore only contextualise the participant's own answers, not act as a
+class-discriminative shortcut. Stripped of that context the model leans
 \emph{more} on position (its position--attention correlation rises from $+0.03$
 to $+0.32$, \Cref{tab:interp}) --- the opposite of what a prompt-shortcut model
 would show, which relies on the late mental-health-question region while the
@@ -1296,7 +1110,7 @@ explanation to the diagnostic criteria.
 \draw[dashed,gray] ({rel axis cs:0,0}|-{axis cs:Tired,0.5}) -- ({rel axis cs:1,0}|-{axis cs:Tired,0.5});
 \end{axis}
 \end{tikzpicture}
-\caption{Per-item PHQ-8 symptom-head ROC-AUC (dev, 5-seed). Every symptom is
+\caption{Per-item PHQ-8 symptom-head ROC-AUC (GRU head, dev, 5-seed). Every symptom is
 predicted above chance (0.5); the most lexicalised symptoms (fatigue, anhedonia)
 are the most text-predictable.}
 \label{fig:symptom}
@@ -1694,15 +1508,15 @@ order-free pooling for the headline before any E-DAIC data was touched; it was
 evaluated on E-DAIC exactly once. The BiGRU variant compared below was
 \emph{not} part of that a-priori choice: it surfaced only afterwards, as the
 winner of a separate participant-only \emph{development}-AUC ablation on
-DAIC-WOZ, and is reported here as a post-hoc probe of whether the in-domain
-winner also transfers. Neither configuration's E-DAIC test score was used to
+DAIC-WOZ, and is reported here as a post-hoc probe of whether the
+development-selected model also transfers. Neither configuration's E-DAIC test score was used to
 select it --- the order-free model was pre-specified, the BiGRU was dev-selected
 on the source corpus --- so the comparison below describes, and does not
 circularly choose, the better generalizer.
 
-We report the threshold-free ROC-AUC and PR-AUC as the primary transfer numbers:
-a decision threshold cannot be tuned on the target without leaking it, and the
-source threshold is mis-calibrated under domain shift.
+We report the threshold-free ROC-AUC as the primary transfer metric (with PR-AUC
+quoted in the text): a decision threshold cannot be tuned on the target without
+leaking it, and the source threshold is mis-calibrated under domain shift.
 
 \subsection{Result: the model transfers, and order-free pooling transfers best}
 \label{sec:edaic-result}
@@ -1721,24 +1535,28 @@ balanced-accuracy~$0.67$. Domain shift de-calibrates the probabilities while
 leaving the ranking largely intact, which is why AUC is the honest transfer
 metric.
 
-\textbf{(2) The best in-domain configuration is not the best transfer
-configuration.} Adding a BiGRU temporal-context layer is the strongest source
-model \emph{on DAIC-WOZ development} (per-seed dev AUC $0.900$ vs.\ $0.857$ for
-order-free pooling). Yet it transfers \emph{worse}: zero-shot E-DAIC AUC
-$0.662$ vs.\ $0.716$, a $0.052$ gap that is significant under a seed-paired
-Wilcoxon signed-rank test over the 30 seeds ($p<10^{-4}$). The GRU also fails to
-convert its development edge into a DAIC \emph{test} gain ($0.786$ vs.\ $0.819$),
-so its advantage is confined to the development split it was selected on: the
-temporal layer fits corpus-specific turn-ordering that does not survive a change
-of corpus, whereas order-free attention pooling is more robust to the shift.
-Selecting a transfer model on in-domain development AUC would therefore pick the
-\emph{wrong} model; the order-free pooler is both the safer in-domain choice and
-the better generalizer.
+\textbf{(2) The development-best configuration generalizes worst --- in-domain
+and across corpora.} Adding a BiGRU temporal-context layer is the strongest
+source model \emph{only on the DAIC-WOZ development split} (per-seed dev AUC
+$0.900$ vs.\ $0.857$ for order-free pooling). That edge survives to \emph{no}
+held-out test set: the GRU is lower on the in-domain DAIC test ($0.786$ vs.\
+$0.819$) and lower again zero-shot on E-DAIC ($0.662$ vs.\ $0.716$; the $0.052$
+gap is significant under a seed-paired Wilcoxon signed-rank test over the 30
+seeds, $p<10^{-4}$). The primary lesson is therefore one of \emph{model
+selection}: development AUC is an unreliable signal here --- the temporal layer
+overfits the split it is tuned on rather than encoding transferable structure,
+so the dev-best model is the wrong choice on every test set, in-domain test
+included. The cross-corpus result sharpens this: the gap widens out-of-corpus,
+and the permutation-invariant order-free pooler is the more robust inductive
+bias under domain shift, making it both the safer in-domain choice and the
+better generalizer.
 
 \begin{table}[t]
 \caption{Zero-shot cross-corpus transfer.
 ROC-AUC as 30-seed per-seed mean$\pm$std; the E-DAIC column adds a subject-level
-bootstrap 95\% CI (2000 resamples of the 56 test subjects) on the seed-ensemble.
+bootstrap 95\% CI (2000 resamples of the 56 test subjects) on the seed-ensemble,
+shown here because E-DAIC is the new (transfer) result --- the in-domain
+DAIC-WOZ bootstrap CIs are already in \Cref{tab:external,tab:ladder}.
 The order-free model wins the transfer despite the GRU winning the DAIC
 development split.}
 \label{tab:edaic}
@@ -1762,44 +1580,31 @@ BiGRU             & \textbf{0.900}\,{\footnotesize$\pm$.007} & 0.786\,{\footnote
 A text-only DAIC-WOZ model transfers zero-shot to E-DAIC at AUC $\approx\!0.72$
 with no target supervision --- evidence that the gated-attention MIL screen
 learns corpus-transferable depression signal rather than a single corpus's
-artefacts. The transfer also exposes a selection lesson that the rest of this
-paper's in-domain protocol cannot: a temporal-context head that helps in-domain
-\emph{hurts} out-of-corpus, so generalization-critical design choices should be
-validated across corpora, not on a single development split.
+artefacts. The transfer also sharpens a model-selection lesson: the head that
+tops the \emph{development} split (BiGRU) is worse on every held-out test set ---
+the in-domain DAIC test and, by a wider and significant margin, zero-shot
+E-DAIC --- so development AUC is an unreliable selection signal, and the
+order-free pooler is the more robust inductive bias under domain shift.
 
 \section{Discussion and Limitations}
 
-The results support a narrow but solid claim: a single TC-MIL network beats the
-cleanest validity-checked baseline significantly on three F1 variants and on AUC,
-and is on par (within seed variation) with the strongest reported text-only single
-model on the official test split. The improvement is attributable to the
-dialogue-chunk representation (the architecture ladder) and to one
-calibration-level change (the class weight). The architecture ladder isolates
-\emph{why}: context is the operative variable, and the instance is a more effective
-and direct place to supply it than the aggregator --- the aggregator-route DAMIL-R
-confirms context helps, and the ladder shows the instance route wins on both mean
-and stability.
+The gain is attributable to the dialogue-chunk representation and to one
+calibration-level change (the class weight): context is the operative variable,
+and placing it inside the instance beats supplying it in the aggregator, on both
+mean and stability.
 
-Several limitations bound the claim, beyond the wide intervals already noted.
-\textbf{Sample size.} The official test set has 47 subjects (14 positive), so the
-subject-level bootstrap intervals are wide and every DAIC-WOZ number, ours
-included, is uncertain at the third decimal; our seed-level significance answers
-``does the architecture's expected score differ'' and should not be read as a
-subject-level generalisation guarantee, which the bootstrap shows is far less
-resolved. \textbf{A prevalence prior, not just labels.} The a-priori prevalence
-threshold is leakage-free of test \emph{labels} but assumes the deployment
-prevalence equals the training prevalence ($\approx$0.28); the headline F1 (not
-the threshold-free AUC) therefore depends on that prior, and a different
-prevalence would move the operating point within the oracle-bounded
-$[\,{\approx}0.75,0.80\,]$ band (\Cref{tab:levers}).
-\textbf{Attention is not a faithful per-chunk explanation}, a property we measure
-rather than assume; the faithful, informative signal lives in the occlusion
-attribution, not in an attention heatmap. \textbf{Single corpus and modality.}
-Model selection is on one corpus and text only; the E-DAIC result is zero-shot and
-single-shot, and no audio or visual signal is used. \textbf{Label provenance.} The
-binary label is itself derived from PHQ-8, the same instrument the auxiliary head
-predicts, so the symptom read-out explains a PHQ-8-grounded label rather than an
-independent clinical diagnosis, which DAIC-WOZ does not provide.
+Several limitations bound the claim. \textbf{Sample size.} With 47 test subjects
+(14 positive) the bootstrap intervals are wide; our seed-level significance
+concerns the architecture's expected score, not a subject-level generalisation
+guarantee. \textbf{A prevalence prior.} The a-priori threshold is leakage-free of
+test \emph{labels} but assumes deployment prevalence equals training prevalence
+($\approx$0.28), so the headline F1 --- not the AUC --- depends on that prior
+(\Cref{tab:levers}). \textbf{Attention is not a faithful per-chunk explanation};
+the faithful signal lives in the occlusion attribution, not a heatmap.
+\textbf{Single corpus and modality.} Selection is on one corpus, text only, and
+the E-DAIC result is zero-shot and single-shot. \textbf{Label provenance.} The
+binary label derives from PHQ-8, the instrument the auxiliary head predicts, so
+the read-out explains a PHQ-8-grounded label, not an independent diagnosis.
 \iffalse
 \textbf{Ethical considerations.} TC-MIL is a research screen, not a diagnostic
 instrument. At a test AUC of $0.86$ in-domain and $\approx\!0.72$ zero-shot, with
@@ -1834,6 +1639,13 @@ clinically grounded, and free of the interviewer-prompt shortcut, while
 transparently reporting that its attention is not a faithful per-instance saliency. The source
 code and the trained network weights are available at
 \url{https://github.com/SaverioNapolitano/tcmil} to ensure reproducibility.
+
+% Appendix with the statistical-test tables (Tab. VIII/IX) commented out
+% (kept in appendix.tex). To re-enable: uncomment the two lines below and
+% restore the \Cref pointers in the Statistical Significance Summary
+% (tab:stats, tab:cvstats, sec:appendix-stats).
+%\appendices
+%\input{appendix}
 
 \begin{thebibliography}{00}
 \bibitem{gratch2014} J. Gratch, R. Artstein, G. Lucas, G. Stratou, S. Scherer,
