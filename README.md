@@ -13,7 +13,7 @@ over a **frozen sentence encoder**.
 - A **CUDA GPU** is strongly recommended for training/fine-tuning (CPU works for
   inference and small runs, just slowly).
 - Access to the **DAIC-WOZ** corpus (and optionally **E-DAIC**) under their EULA —
-  needed only to download raw transcripts; the label splits ship in the repo.
+  needed to download both raw transcripts and label splits.
 
 All Python deps (torch, transformers, peft, scikit-learn, …) are pinned in
 `pyproject.toml` / `uv.lock`.
@@ -40,7 +40,7 @@ root on `sys.path`).
 must request access and agree to the data-use terms; once approved you receive
 the base URL for the participant archives.
 
-> **Request access:** `<ACCESS_REQUEST_LINK_PLACEHOLDER>`
+> **Request access:** [link](https://dcapswoz.ict.usc.edu)
 
 This repo ships **neither transcripts nor labels** — both come from your
 approved download. Two manual steps:
