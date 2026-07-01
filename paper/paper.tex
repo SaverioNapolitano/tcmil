@@ -70,17 +70,21 @@ and evaluation protocols that are not comparable across papers and can
 leak information through pooled cross-validation, test-tuned thresholds, or the
 interviewer-prompt shortcut. We present TC-MIL, a topic-chunk Multiple-Instance
 Learning model that treats short sliding windows of dialogue as instances,
-embeds them with a frozen sentence encoder, aggregates them with gated-attention
-pooling over a recurrent context, and is regularised by an auxiliary PHQ-8
-symptom head. Evaluated strictly on the official AVEC2017 split (per-seed mean
+embeds them with a frozen sentence encoder, and aggregates them with
+gated-attention pooling --- optionally over a bidirectional-GRU context, though
+the order-free (plain) variant is deployed as the headline for its faithful
+attribution and robustness under distribution shift --- regularised by an
+auxiliary PHQ-8 symptom head. Evaluated strictly on the official AVEC2017 split (per-seed mean
 over 30 seeds, an a-priori prevalence threshold, a single test evaluation), a
 single TC-MIL network reaches macro-F1 0.774, micro-F1 0.814 and ROC-AUC 0.864,
 significantly exceeding the cleanest validity-checked text-only baseline and
 matching the strongest reported text-only single model within seed variation. Ablations localise the gain in the dialogue-chunk
 representation and in removing a recall-biasing class weight, cross-validation
 corroborates the ranking, and interpretability analysis shows the attention is
-cross-seed stable, free of the prompt shortcut, and clinically grounded, while
-not a faithful per-instance explanation.
+cross-seed stable, free of the prompt shortcut, and clinically grounded; the
+deployed plain head admits a faithful occlusion-based attribution, whereas the
+selective GRU attention is informative in bulk but not a faithful per-instance
+explanation.
 \end{abstract}
 
 \begin{IEEEkeywords}
