@@ -338,10 +338,10 @@
   \begin{itemize}
     \item The known shortcut: lean on the therapist's late mental-health questions.
     \item Our model's position--attention correlation is $\approx 0$
-          (\num{+0.03} dev, \num{+0.002} test) --- attention is spread across the interview.
+          (\num{-0.03} dev, \num{-0.04} test) --- attention is spread across the interview.
     \item Retrain with \emph{all interviewer lines removed} (participant-only):
           every metric \bad{drops} (AUC $0.868\!\rightarrow\!0.801$) \emph{and} the
-          position--attention correlation \emph{rises} $+0.03\!\rightarrow\!+0.32$.
+          position--attention correlation \emph{rises} $-0.04\!\rightarrow\!+0.19$.
     \item[$\Rightarrow$] Position-reliance appears \emph{only after} the prompts are gone ---
           the opposite of a shortcut-rider (which keys on the prompts \emph{while present}
           and would collapse without them).

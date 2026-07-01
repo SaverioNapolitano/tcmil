@@ -42,6 +42,7 @@
     T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
 
 \begin{document}
+\raggedbottom  % avoid \flushbottom stretching float separations into mid-column gaps
 
 \title{Topic-Chunk Multiple-Instance Learning for\\Text-Only Depression
 Detection on DAIC-WOZ\\Under a Leakage-Free Evaluation Protocol}
@@ -396,25 +397,27 @@ results table, which head and seed budget it uses and why.
 attention head (faithful linear attribution); ``GRU'' is the BiGRU temporal head
 (selective, informative attention); ``P-only'' strips interviewer turns. Seed
 budget: per-seed mean over $N$ seeds unless marked \emph{ens.}\ (probability
-ensemble) or \emph{per-run} (fold$\times$seed).}
+ensemble) or \emph{per-run} (fold$\times$seed). Split is the evaluation split;
+\emph{CV} is the internal cross-validation pool (train+dev) and \emph{E-DAIC}
+the transfer target corpus.}
 \label{tab:config}
 \centering
 \small
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}p{0.30\columnwidth}p{0.16\columnwidth}p{0.18\columnwidth}p{0.22\columnwidth}@{}}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.17\columnwidth}>{\raggedright\arraybackslash}p{0.27\columnwidth}>{\raggedright\arraybackslash}p{0.185\columnwidth}>{\raggedright\arraybackslash}p{0.27\columnwidth}@{}}
 \toprule
-\textbf{Result} & \textbf{Head} & \textbf{Seeds} & \textbf{Purpose} \\
+\textbf{Result} & \textbf{Head} & \textbf{Seeds / split} & \textbf{Purpose} \\
 \midrule
-\Cref{tab:external} (headline) & Plain & 30 & vs.\ literature \\
-\Cref{tab:ladder} (ladder) & Plain\,/\,per-arch & 30 & architecture gain \\
-\Cref{tab:levers} (levers) & Plain & 30 & decision rule \\
-\Cref{tab:abldesign-rep,tab:abldesign-hp} & Plain (GRU cmp.) & 5 dev & config selection \\
-\Cref{tab:cv} (internal CV) & GRU & per-run & internal ranking \\
-\Cref{tab:interp} (interp.) & GRU & 5 dev/test & faithfulness \\
-\Cref{fig:faith} (faith.) & GRU\,+\,Plain & 5 dev/test & faithfulness \\
-\Cref{tab:ponly} (prompt ctrl) & GRU, P-only & 5 ens. & bias control \\
-% \Cref{tab:ft-grid}--\ref{tab:ft-cv} (FT) & GRU (FT harness) & 5\,/\,30 & encoder adapt. \\ % FT section is \iffalse'd out; tables tab:ft-* do not exist in the build
-\Cref{tab:edaic} (transfer) & P-only, Plain\,/\,GRU & 30 & zero-shot E-DAIC \\
+\Cref{tab:external} & Plain & 30, test & vs.\ literature \\
+\Cref{tab:ladder} & Plain\,/\,per-arch & 30, test & architecture gain \\
+\Cref{tab:levers} & Plain & 30, test & decision rule \\
+\Cref{tab:abldesign-rep,tab:abldesign-hp} & Plain (GRU cmp.) & 5, dev & config selection \\
+\Cref{tab:cv} & GRU & per-run, CV & internal ranking \\
+\Cref{tab:interp} & GRU, $pw1$ & 5, test & faithfulness \\
+\Cref{fig:faith} & GRU+Plain, $pw1$ & 5, test & faithfulness \\
+\Cref{tab:ponly} & GRU, P-only & 5 ens., test & bias control \\
+% \Cref{tab:ft-grid}--\ref{tab:ft-cv} & GRU (FT harness) & 5\,/\,30, dev/test & encoder adapt. \\ % FT section is \iffalse'd out; tables tab:ft-* do not exist in the build
+\Cref{tab:edaic} & P-only, Plain\,/\,GRU & 30, E-DAIC & zero-shot \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -822,8 +825,7 @@ The official-split comparison is external. To check
 that the ranking is not an artifact of one split, we cross-validate on the
 training pool only (142 subjects, test excluded), which is an \emph{internal}
 comparison specific to our protocol. We use repeated Stratified Group $K$-Fold
-(5 repeats $\times$ 5 folds, 5 seeds per fold $=125$ per-run evaluations per
-model) and Monte Carlo (repeated stratified shuffle) splits, with the
+(5 repeats $\times$ 5 folds, 5 seeds per fold) and Monte Carlo (repeated stratified shuffle) splits, with the
 transductive-prevalence threshold (match the predicted positive rate on each
 fold's own unlabelled test scores to the training prevalence), which is
 scale-safe across folds and uses no labels. Because this comparison probes the
@@ -903,11 +905,11 @@ split.
 \section{Interpretability}
 \label{sec:interpret}
 
-We treat interpretability as a measured result, not an illustrative heat-map.
+We treat interpretability as a measured result.
 Every claim is quantified, validated for faithfulness, reported with a
 cross-seed stability score, and kept leakage-clean (models trained on the
-official train split; analysis on dev, then once on test for the final
-figures). TC-MIL exposes three interpretable surfaces: gated attention over
+official train split; the headline faithfulness, stability and bias metrics are
+reported once on test, and ablation on dev). TC-MIL exposes three interpretable surfaces: gated attention over
 human-readable chunks, the PHQ-8 symptom head, and the dialogue-chunk
 instances themselves.
 
@@ -949,8 +951,9 @@ the chunks through the recurrence: removing one perturbs the representation of
 the others, the attention becomes selective (weights up to 0.55, stability
 0.60) and \emph{ceases to be per-chunk faithful} --- the within-interview
 attention$\leftrightarrow$occlusion correlation is significantly
-\emph{negative} ($-0.28\pm0.31$, $n=46$, one-sample $t$ vs.\ 0
-$p=3\!\times\!10^{-7}$). Yet the GRU model's \emph{aggregate} comprehensiveness
+\emph{negative} (per-interview mean $-0.31\pm0.32$, $n=46$, one-sample $t$ vs.\ 0
+$p=5.7\!\times\!10^{-8}$; the rank-pooled slope of \Cref{fig:faith} is
+$-0.28$). Yet the GRU model's \emph{aggregate} comprehensiveness
 is higher (0.27 vs.\ 0.19 @5): removing its top-attended chunks lowers the
 probability more in bulk, even though the single most-attended chunk is not the
 most influential one. This reproduces the Jain \& Wallace dissociation: TC-MIL's
@@ -1004,14 +1007,16 @@ prompts available the attribution lands on the participant's own disclosures
 \end{figure*}
 
 \begin{table}[t]
-\caption{Interpretability, 5-seed (GRU head). Dial.\ vs.\
+\caption{Interpretability on the \emph{test} split, 5-seed,
+$pos\_weight\!=\!1.0$ (GRU head). Dial.\ vs.\
 participant-only (interviewer lines removed). For the two metrics with a
 per-interview distribution (stability, attention$\leftrightarrow$occlusion
 correlation) we give mean$\pm$std over interviews; the occlusion correlation
 is tested against 0 by a one-sample $t$-test ($^{*}$ $p<0.05$). The remaining
 rows are 5-seed aggregate point estimates, so no test is attached.
 Interviewer-kw attn.\ mass is the fraction of total attention placed on chunks
-containing the interviewer's mental-health-question keywords.}
+containing the interviewer's mental-health-question keywords.
+$^{\dagger}$Symptom AUC is the dev split: the test CSV lacks PHQ-8 item labels.}
 \label{tab:interp}
 \centering
 \small
@@ -1020,20 +1025,20 @@ containing the interviewer's mental-health-question keywords.}
 \toprule
 \textbf{Metric} & \textbf{Dial.} & \textbf{P-only} \\
 \midrule
-Attention stability (Spearman) & $0.77${\tiny$\pm$.09} & $0.66${\tiny$\pm$.14} \\
-Attn$\leftrightarrow$occlusion corr. & $-0.23${\tiny$\pm$.40}$^{*}$ & $0.00$ \\
-Comprehensiveness @1/@5 & .09/.28 & .06/.29 \\
-Sufficiency @1/@5 & $-.21$/$-.15$ & $-.24$/$-.14$ \\
-Position--attention corr. & $+0.03$ & $+0.32$ \\
-Interviewer-kw attn.\ mass & 0.71 & 0.00 \\
-Symptom AUC (8-item range) & .74--.94 & .75--.91 \\
+Attention stability (Spearman) & $0.60${\tiny$\pm$.12} & $0.66${\tiny$\pm$.15} \\
+Attn$\leftrightarrow$occlusion corr. & $-0.31${\tiny$\pm$.32}$^{*}$ & $-0.01${\tiny$\pm$.42} \\
+Comprehensiveness @1/@5 & .09/.27 & .08/.25 \\
+Sufficiency @1/@5 & $-.22$/$-.10$ & $-.25$/$-.17$ \\
+Position--attention corr. & $-0.04$ & $+0.19$ \\
+Interviewer-kw attn.\ mass & 0.67 & 0.00 \\
+Symptom AUC (8-item range)$^{\dagger}$ & .74--.94 & .75--.91 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{No interviewer-prompt shortcut}
 The strongest validity result is that the position--attention correlation is
-$\approx$0 ($+0.03$ dev, $+0.002$ test): attention is spread across the
+$\approx$0 ($-0.03$ dev, $-0.04$ test): attention is spread across the
 interview, not concentrated in the late mental-health-question region that
 \cite{burdisso2024} identify as the shortcut. To confirm the model is not merely
 exploiting the interviewer prompts, we retrain with all interviewer lines
@@ -1047,8 +1052,8 @@ the same order, for every subject --- they are near-constant across classes and
 so cannot by themselves discriminate the label. The signal they add can
 therefore only contextualise the participant's own answers, not act as a
 class-discriminative shortcut. Stripped of that context the model leans
-\emph{more} on position (its position--attention correlation rises from $+0.03$
-to $+0.32$, \Cref{tab:interp}) --- the opposite of what a prompt-shortcut model
+\emph{more} on position (its position--attention correlation rises from $-0.04$
+to $+0.19$, \Cref{tab:interp}) --- the opposite of what a prompt-shortcut model
 would show, which relies on the late mental-health-question region while the
 prompts are present and collapses once they are removed. Here position-reliance
 appears only \emph{after} the prompts are gone, confirming the deployed model
@@ -1056,9 +1061,7 @@ used them as context rather than as a positional shortcut. The surviving signal 
 occlusion attribution (\Cref{fig:occ}b) lands on the participant's own symptom
 disclosures with faithfulness unchanged ($\rho=+0.99$). The bias control is thus
 the near-zero position--attention correlation of the deployed model, not a
-participant-only accuracy gain. TC-MIL is, to our knowledge, the only text-only
-DAIC-WOZ model reported with an explicit interviewer-prompt bias control of this
-kind.
+participant-only accuracy gain.
 
 \begin{table}[t]
 \caption{Interviewer-prompt control on the official test split: full-dialogue
@@ -1082,7 +1085,7 @@ micro-F1      & \textbf{0.787} & 0.702 \\
 \end{table}
 
 \subsection{Clinical read-out}
-The PHQ-8 symptom head is a genuine clinical signal, not decoration:
+The PHQ-8 symptom head is a genuine clinical signal:
 \Cref{fig:symptom} shows the per-item ROC-AUC, which ranges from 0.74 to 0.94
 and is highest on the most lexicalised symptoms. The head is most accurate on
 \emph{Tired} (0.94) and \emph{No-Interest} (0.93), and weakest on
@@ -1119,12 +1122,12 @@ are the most text-predictable.}
 \subsection{Faithfulness and accuracy are decoupled}
 A natural hypothesis was that removing the recall-biasing class weight (the
 lever that improved F1) would also make attention more faithful. It does not:
-under $pos\_weight=1.0$ the attention becomes \emph{less} stable (0.60) and
-\emph{less} per-chunk faithful (occlusion correlation $-0.32$), while the
-no-shortcut result is unchanged. The recall-biased loss apparently produced
+relative to the auto-$pos\_weight$ model (dev stability 0.77, occlusion
+correlation $-0.23$), the headline $pos\_weight\!=\!1.0$ model (\Cref{tab:interp})
+is \emph{less} stable (dev 0.60) and \emph{less} per-chunk faithful (dev
+occlusion correlation $-0.32$), while the no-shortcut result is unchanged. The recall-biased loss apparently produced
 peakier, more selectable attention; de-biasing improves the decision but
-slightly blurs the per-chunk attribution. We therefore report the F1
-improvement and the faithfulness behaviour as separate, independent findings.
+slightly blurs the per-chunk attribution.
 
 \iffalse
 \section{Does Fine-Tuning the Encoder Help?}
@@ -1514,8 +1517,7 @@ select it --- the order-free model was pre-specified, the BiGRU was dev-selected
 on the source corpus --- so the comparison below describes, and does not
 circularly choose, the better generalizer.
 
-We report the threshold-free ROC-AUC as the primary transfer metric (with PR-AUC
-quoted in the text): a decision threshold cannot be tuned on the target without
+We report the threshold-free ROC-AUC and PR-AUC as the primary transfer metrics: a decision threshold cannot be tuned on the target without
 leaking it, and the source threshold is mis-calibrated under domain shift.
 
 \subsection{Result: the model transfers, and order-free pooling transfers best}
@@ -1528,7 +1530,7 @@ temporal-pooling variants of the matched source. Two findings.
 order-free model carries an in-domain test AUC of $0.819$ to a zero-shot E-DAIC
 AUC of $0.716$ (30-seed per-seed mean $0.716\pm0.017$; subject-level bootstrap
 $95\%$ CI $[.55,.88]$; PR-AUC $0.685$) --- a $\approx\!0.10$ AUC drop, well above
-chance and consistent with the cross-ASR, cross-cohort gap. As anticipated, the thresholded operating point degrades more
+chance and consistent with the cross-ASR, cross-cohort gap. The thresholded operating point degrades more
 than the ranking: with the source threshold transferred unchanged the F1 is
 $0.46$, and even a target-prevalence threshold reaches only F1~$0.54$ /
 balanced-accuracy~$0.67$. Domain shift de-calibrates the probabilities while
