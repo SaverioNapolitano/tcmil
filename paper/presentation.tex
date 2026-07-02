@@ -350,6 +350,41 @@
   \end{itemize}
 \end{frame}
 
+\begin{frame}{The full interpretability panel --- one table}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+      \centering\footnotesize
+      \setlength{\tabcolsep}{4pt}
+      \renewcommand{\arraystretch}{1.18}
+      \begin{tabular}{@{}p{0.5\linewidth}cc@{}}
+        \toprule
+        \textbf{Metric} & \textbf{Dial.} & \textbf{P-only} \\
+        \midrule
+        Attention stability (Spearman) & \num{0.60}{\tiny$\pm$.12} & \num{0.66}{\tiny$\pm$.15} \\
+        Attn$\leftrightarrow$occ.\ corr. & $-0.31${\tiny$\pm$.32}$^{*}$ & $-0.01${\tiny$\pm$.42} \\
+        Comprehensiveness @1/@5 & .09/.27 & .08/.25 \\
+        Sufficiency @1/@5 & $-.22$/$-.10$ & $-.25$/$-.17$ \\
+        Position--attn.\ corr. & \good{$-0.04$} & \bad{$+0.19$} \\
+        Interviewer-kw attn.\ mass & 0.67 & 0.00 \\
+        Symptom AUC (8-item)$^{\dagger}$ & .74--.94 & .75--.91 \\
+        \bottomrule
+      \end{tabular}
+      \\[3pt]{\scriptsize Test split, 5-seed, GRU head. $^{*}p<0.05$ vs.\ 0
+       (one-sample $t$); $^{\dagger}$dev --- test CSV lacks PHQ-8 item labels.}
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \begin{itemize}\small
+        \item \textbf{Faithfulness (ERASER):} comprehensiveness \good{@5 .27},
+              negative sufficiency --- top-attended chunks carry the decision in
+              \emph{bulk} (though the single most-attended chunk isn't the most
+              influential: attn$\leftrightarrow$occ.\ corr.\ \bad{negative}).
+        \item \textbf{Stability:} attention rankings reproduce \num{0.60}--0.66
+              across seeds.
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
 \begin{frame}{Clinical read-out --- PHQ-8 symptom head}
   \begin{columns}[c]
     \begin{column}{0.58\textwidth}
