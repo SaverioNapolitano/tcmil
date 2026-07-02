@@ -1,0 +1,25 @@
+#!/bin/bash
+#SBATCH --job-name=tcmil-ft2-grid
+#SBATCH --array=1-20%4
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=48G
+#SBATCH --time=08:00:00
+#SBATCH --output=results/ft/logs/job2_grid_%A_%a.out
+#SBATCH --requeue              # auto-reschedule if a node dies
+## adjust to your cluster:
+##SBATCH --partition=gpu
+##SBATCH --account=YOUR_ACCOUNT
+#
+# JOB 2 — Stage-1 fine-tuning GRID (dev-selection only, NO test).
+# 20 configs in scripts/finetune/configs/grid_configs.txt, one per array task, throttled to 4
+# concurrent (%4). Lines 19-20 are DAPT configs -> need JOB 1 done first, so
+# submit with a dependency:
+#   d=$(sbatch --parsable scripts/finetune/job1_dapt.sh)
+#   sbatch --dependency=afterok:$d scripts/finetune/job2_grid.sh
+# If you skip DAPT, set --array=1-18%4 above.
+set -e
+export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p results/ft/logs
+bash scripts/finetune/run_grid.sh "$SLURM_ARRAY_TASK_ID"

@@ -1,0 +1,18 @@
+# Stage-2 finalists — SELECTED from job-2 grid by the PRE-REGISTERED rule
+# (README "Stage 2" / summarize_finetune.py::select_finalists): the top configs
+# within one seed-noise band (+/-0.015) of the best 5-seed PER-SEED dev AUC mean,
+# capped at 4, + frozen control. NB: selection is per-seed single-model AUC, NOT
+# the dev-ensemble AUC (ensemble averaging cancels seed noise -> flatters
+# high-variance configs that are weak as single models; the single-model test
+# headline is per-seed, so dev selection must match it).
+# One per line: name|flags. Array = #lines = 5. Holm-correct the 4 FT-vs-frozen p.
+#
+# Per-seed dev AUC mean(+/-std): mxbai_lora 0.916(.005), r16_ffn 0.915(.008),
+# r8_lr2e4 0.913(.010), last4_lr1e5 0.908(.008); all clear frozen 0.892(.003) by
+# the band. Top-4 of 6 in-band candidates (cap applied; lora_r16_lr2e4 0.907 and
+# full_lr1e5 0.906 also in band, dropped by cap). DAPT dropped (collapsed).
+mxbai_lora_r16_lr1e4|--ft_method lora --lora_r 16 --encoder_lr 1e-4 --encoder_name mixedbread-ai/mxbai-embed-large-v1
+lora_r16_ffn_lr1e4|--ft_method lora --lora_r 16 --lora_targets attn_ffn --encoder_lr 1e-4
+lora_r8_lr2e4|--ft_method lora --lora_r 8 --encoder_lr 2e-4
+last4_lr1e5|--ft_method last_k --unfreeze_last_k 4 --encoder_lr 1e-5
+frozen_ctrl|--ft_method frozen

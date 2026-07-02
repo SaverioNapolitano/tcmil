@@ -1,0 +1,465 @@
+% =====================================================================
+% TC-MIL conference talk. Clean modern deck on the metropolis theme.
+% Compile: pdflatex presentation.tex  (twice, for the title/section refs)
+% Reuses the paper's figure PDFs (fig_calibration, fig3_faithfulness).
+% =====================================================================
+\documentclass[10pt,aspectratio=169]{beamer}
+
+\usetheme{metropolis}
+\metroset{sectionpage=progressbar, numbering=fraction, progressbar=foot}
+
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning, fit, arrows.meta}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
+\usepackage{multirow}
+% mean$\pm$std with [CI], reused verbatim from the paper tables
+\newcommand{\celld}[3]{\shortstack{#1{\footnotesize\,$\pm$#2}\\[-1.5pt]{\tiny[#3]}}}
+
+% --- restrained, professional accent palette -------------------------
+\definecolor{mDarkTeal}{HTML}{1F4E5F}
+\definecolor{mAccent}{HTML}{0E7C7B}
+\definecolor{mGood}{HTML}{2E7D32}
+\definecolor{mWarn}{HTML}{B23A48}
+\setbeamercolor{frametitle}{bg=mDarkTeal}
+\setbeamercolor{progress bar}{fg=mAccent}
+\setbeamercolor{alerted text}{fg=mAccent}
+
+\newcommand{\good}[1]{\textcolor{mGood}{#1}}
+\newcommand{\bad}[1]{\textcolor{mWarn}{#1}}
+\newcommand{\num}[1]{\textbf{#1}}
+
+% --- keep appendix/backup frames out of the total slide count --------
+% Final main-talk frame fixes \inserttotalframenumber; backups then
+% re-show that same number, so the footer reads N/N, not N/(N+backups).
+\newcommand{\backupbegin}{%
+  \newcounter{framenumberappendix}%
+  \setcounter{framenumberappendix}{\value{framenumber}}%
+}
+\newcommand{\backupend}{%
+  \addtocounter{framenumberappendix}{-\value{framenumber}}%
+  \addtocounter{framenumber}{\value{framenumberappendix}}%
+}
+
+% --- title -----------------------------------------------------------
+\title{TC-MIL: Topic-Chunk Multiple-Instance Learning}
+\subtitle{Text-only depression detection on DAIC-WOZ, under a leakage-free protocol}
+\author{Saverio Napolitano, Biagio Carpaneto}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{In one slide}
+  \begin{itemize}
+    \item \textbf{Task.} Detect depression from clinical-interview \emph{transcripts} (DAIC-WOZ).
+    \item \textbf{Idea.} Make each MIL instance a short \emph{dialogue chunk}, not a single turn.
+    \item \textbf{Result.} Single model: macro-F1 \num{0.774}, micro-F1 \num{0.814}, ROC-AUC \num{0.864}
+          --- beats the cleanest verified baseline, matches the best reported single model.
+    \item \textbf{What sets it apart.} A \emph{leakage-free} protocol, an explicit
+          interviewer-prompt bias control, measured attention faithfulness, and honest negative results.
+  \end{itemize}
+  \begin{alertblock}{Thesis}
+    A simple representation change, rigorously evaluated, beats the heavier MIL architectures we compare against.
+  \end{alertblock}
+\end{frame}
+
+% =====================================================================
+\section{The problem}
+
+\begin{frame}{Two problems hold back text-only DAIC-WOZ}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \textbf{1. A representation bottleneck}
+      \begin{itemize}
+        \item Prior systems classify \emph{single turns}.
+        \item Most turns are backchannels: ``yeah'', ``mhm'', ``i don't know''.
+        \item A frozen encoder maps these to near-identical vectors.
+        \item \bad{Pooling cannot reliably recover information absent from the instance representation.}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+      \textbf{2. An evaluation-protocol problem}
+      \begin{itemize}
+        \item Numbers leak via test-tuned thresholds,
+        \item pooled cross-validation that shares subjects,
+        \item the \emph{positional} interviewer-prompt shortcut (Burdisso et al.):
+              exploiting the fixed position of the late mental-health questions
+              inflates macro-F1 from 0.85 (patient-only) to 0.90.
+        \item \bad{Reported numbers are hard to trust and to compare.}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% =====================================================================
+\section{The method: TC-MIL}
+
+\begin{frame}{The idea: a chunk restores context}
+  \begin{columns}[c]
+    \begin{column}{0.46\textwidth}
+      \begin{itemize}
+        \item Instance $=$ a short \emph{sliding window of dialogue} ($w{=}4$, stride $2$).
+        \item $\approx$28 instances/interview, $\approx$65 words each.
+        \item A window holds \emph{a question and its answer} --- restoring the context a
+              single backchanneled turn lacks.
+        \item[$\Rightarrow$] near-degenerate instances become \good{discriminative}.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.54\textwidth}
+      \resizebox{\linewidth}{!}{%
+      \begin{tikzpicture}[
+        font=\scriptsize,
+        ex/.style={draw, rounded corners=1pt, text width=58mm, align=left, inner sep=2.5pt, fill=blue!4, minimum height=4.4mm},
+      ]
+        \node[ex] (e1) {\textbf{E1} \emph{Ellie:} how have you been sleeping? \emph{P:} not well lately};
+        \node[ex, below=1.0mm of e1] (e2) {\textbf{E2} \emph{Ellie:} tell me more \emph{P:} i wake up a lot};
+        \node[ex, below=1.0mm of e2] (e3) {\textbf{E3} \emph{Ellie:} how is your mood? \emph{P:} pretty down most days};
+        \node[ex, below=1.0mm of e3] (e4) {\textbf{E4} \emph{Ellie:} and your energy? \emph{P:} tired all the time};
+        \node[ex, below=1.0mm of e4] (e5) {\textbf{E5} \emph{Ellie:} any interests? \emph{P:} stopped enjoying things};
+        \node[ex, below=1.0mm of e5] (e6) {\textbf{E6} \emph{Ellie:} appetite? \emph{P:} i eat less than before};
+        \node[draw=orange!80!black, thick, rounded corners=3pt, fit=(e1)(e4), inner sep=1.6pt] (w1) {};
+        \node[draw=green!50!black, thick, rounded corners=3pt, fit=(e3)(e6), inner sep=3.4pt] (w2) {};
+        \node[orange!80!black, anchor=west] at ([xshift=2mm]w1.east) {chunk $c_1$ (E1--E4)};
+        \node[green!50!black, anchor=west] at ([xshift=2mm]w2.east) {chunk $c_2$ (E3--E6)};
+      \end{tikzpicture}}
+      \\{\scriptsize Overlapping windows ($w{=}4$, $s{=}2$). Text synthetic.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Architecture --- intentionally minimal}
+  \begin{center}
+  \resizebox{\textwidth}{!}{%
+  \begin{tikzpicture}[
+    node distance=5mm and 7mm, font=\footnotesize,
+    box/.style={draw, rounded corners=2pt, align=center, minimum height=8mm, inner sep=3pt, fill=blue!4},
+    enc/.style={box, fill=orange!8},
+    head/.style={box, fill=green!8},
+    >={Stealth[length=2mm]}, arr/.style={->, thick},
+  ]
+    \node[box, text width=18mm] (interview) {Interview\\transcript};
+    \node[box, right=of interview, text width=18mm] (chunk) {Dialogue\\chunks};
+    \node[box, right=of chunk, text width=15mm] (inst) {chunk\\instances};
+    \node[box, right=of inst, enc, text width=20mm] (encoder) {Frozen sentence\\encoder};
+    \node[box, right=of encoder, text width=15mm] (proj) {Projector\\$+$ BiGRU};
+    \node[box, right=of proj, text width=16mm] (attn) {Gated-attn\\pooling};
+    \node[box, right=of attn, text width=12mm] (bag) {Bag\\vector};
+    \node[head, above right=4mm and 8mm of bag, text width=22mm] (main) {Main logit\\$\Rightarrow$ depressed?};
+    \node[head, below right=4mm and 8mm of bag, text width=22mm] (aux) {PHQ-8 aux head\\{\scriptsize regulariser}};
+    \draw[arr] (interview) -- (chunk);
+    \draw[arr] (chunk) -- (inst);
+    \draw[arr] (inst) -- (encoder);
+    \draw[arr] (encoder) -- (proj);
+    \draw[arr] (proj) -- (attn);
+    \draw[arr] (attn) -- (bag);
+    \draw[arr] (bag.east) -- (main.west);
+    \draw[arr] (bag.east) -- (aux.west);
+    \node[below=5mm of attn, gray, font=\scriptsize, align=center] (interp) {attention $\to$ faithfulness\\/ bias probes};
+    \draw[->, dashed, gray] (attn.south) -- (interp.north);
+  \end{tikzpicture}}
+  \end{center}
+  \begin{itemize}
+    \item Frozen encoder (\texttt{bge-large-en-v1.5}) $\Rightarrow$ embeddings pre-computed and cached.
+    \item Gated-attention pooling over an optional residual BiGRU context; PHQ-8 aux head regularises.
+    \item Head only $\sim\!10^5$ parameters --- \good{no mixup / focal / SWA / diversity losses}.
+          Power is in the \emph{instance definition}, not a heavy network.
+  \end{itemize}
+\end{frame}
+
+% =====================================================================
+\section{Evaluating it honestly}
+
+\begin{frame}{A leakage-free protocol}
+  Every number in this talk obeys the same rules:
+  \begin{itemize}
+    \item Official AVEC2017 test split --- \emph{one} evaluation, never used to select.
+    \item Per-seed mean $\pm$ std over \num{30} seeds (not a lucky single run).
+    \item An \emph{a-priori prevalence} threshold: uses the model's scores and a
+          training prior, \good{never a test label}.
+    \item Subject-level bootstrap CIs $+$ non-parametric and parametric significance tests.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Headline result --- official test split}
+  \begin{table}
+    \centering\footnotesize
+    \begin{tabular}{@{}lccc@{}}
+      \toprule
+      \textbf{Method} & \textbf{macro-F1} & \textbf{micro-F1} & \textbf{ROC-AUC} \\
+      \midrule
+      HAN+L (2020), single run               & 0.70 & --- & --- \\
+      Bi-LSTM+Attn (2022), single run        & 0.783 & --- & --- \\
+      Agarwal MV-IA (2022), single run       & 0.732 & 0.717 & --- \\
+      Milintsevich (2023), verified baseline & 0.739{\scriptsize$\pm$.025} & 0.766{\scriptsize$\pm$.023} & --- \\
+      Agarwal multi-view (2024), single run  & 0.80  & --- & --- \\
+      \midrule
+      \textbf{TC-MIL (ours)}
+        & \celld{\good{\num{.774}}}{.029}{.591,.898}
+        & \celld{\good{\num{.814}}}{.024}{.66,.92}
+        & \celld{\good{\num{.864}}}{.011}{.751,.963} \\
+      \bottomrule
+    \end{tabular}
+  \end{table}
+  {\scriptsize TC-MIL cells: 30-seed per-seed mean$\pm$std (top) and subject-level
+   bootstrap 95\% [CI] (bottom, 2000 resamples of the 47 test subjects).
+   Milintsevich: per-seed mean$\pm$std (5 seeds). Other baselines: single run, no std or interval reported.}
+  \begin{itemize}
+    \item Beats the cleanest \emph{verified} baseline on every reported metric
+          ($p=3.8\times10^{-7}$, one-sample $t$ over 30 seeds).
+    \item Matches the best reported single models \emph{within one seed std} ---
+          they report a single run, no AUC, no bias control, no interval.
+  \end{itemize}
+\end{frame}
+
+% =====================================================================
+\section{Why it works}
+
+\begin{frame}{The architecture ladder localises the gain}
+  Same protocol, full lineage retrained from scratch (official split, 30-seed mean$\pm$std):
+  \begin{table}
+    \centering\small
+    \begin{tabular}{@{}lcc@{}}
+      \toprule
+      \textbf{Architecture} & \textbf{macro-F1} & \textbf{ROC-AUC} \\
+      \midrule
+      dialogue mean (context-free) & 0.51{\footnotesize$\pm$.10} & 0.66{\footnotesize$\pm$.04} \\
+      flat utterance-MIL (attn)    & 0.48{\footnotesize$\pm$.08} & 0.67{\footnotesize$\pm$.09} \\
+      DAMIL-R (role-aware)         & 0.66{\footnotesize$\pm$.06} & 0.75{\footnotesize$\pm$.06} \\
+      SS-DAMIL-R (symptom-supervised) & 0.67{\footnotesize$\pm$.07} & 0.76{\footnotesize$\pm$.05} \\
+      \midrule
+      \textbf{TC-MIL (dialogue chunks)} & \good{\num{0.77}}{\footnotesize$\pm$.03} & \good{\num{0.86}}{\footnotesize$\pm$.01} \\
+      \bottomrule
+    \end{tabular}
+  \end{table}
+  \begin{itemize}
+    \item Utterance-level instances are \bad{the bottleneck} --- attention has nothing to select.
+    \item Within our ablation study, \emph{chunking the dialogue} is the most influential choice.
+    \item TC-MIL is also $\approx\!5\times$ more stable (tighter AUC std) than the best legacy model.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Design ablations --- each axis swept on dev only}
+  Every TC-MIL design axis tuned on the \emph{development} split (5-seed mean$\pm$std);
+  the test split is never touched here.
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}\footnotesize
+      \textit{Encoder \& temporal head}
+      \begin{tabular}{@{}lc@{}}
+        \toprule
+        \textbf{Choice} & \textbf{dev AUC} \\
+        \midrule
+        \textbf{bge-large (base)} & \textbf{.909}{\tiny$\pm$.005} \\
+        UAE / mxbai / bge-base & .91--.92 \\
+        \midrule
+        plain (order-free) & .876{\tiny$\pm$.001} \\
+        \textbf{GRU (base)} & \textbf{.909}{\tiny$\pm$.005} \\
+        Transformer & .917{\tiny$\pm$.012} \\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+    \begin{column}{0.5\textwidth}\footnotesize
+      \textit{Granularity \& regularisation}
+      \begin{tabular}{@{}lc@{}}
+        \toprule
+        \textbf{Choice} & \textbf{dev AUC} \\
+        \midrule
+        $w2/s1$ & .915{\tiny$\pm$.004} \\
+        \textbf{$w4/s2$ (base)} & \textbf{.909}{\tiny$\pm$.005} \\
+        $w6/s3$ & .919{\tiny$\pm$.010} \\
+        \midrule
+        dropout 0.3 / 0.4 / 0.5 & .91 (flat) \\
+        aux-weight 0 / .15 / .5 & .91 (flat) \\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+  \end{columns}
+  \vspace{1mm}
+  \begin{itemize}\small
+    \item Dev AUC \good{flat ($\approx$.91)} across encoder, window, dropout, aux-weight ---
+          \good{TC-MIL is not brittle} to these knobs.
+    \item A temporal head adds dev AUC, but \emph{order-free} plain pooling is kept for
+          \good{faithfulness} (linear attribution).
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{The ranking holds up internally}
+  \begin{itemize}
+    \item Cross-validate on the training pool only (test excluded):
+          repeated $K$-fold ($n{=}125$) and Monte-Carlo ($n{=}50$).
+    \item TC-MIL has the \good{highest mean in every column} of both protocols
+          and wins the \good{ROC-AUC ranking throughout}.
+    \item $K$-fold: significant on all primary metrics vs.\ \emph{every} baseline
+          ($p<0.01$). Monte-Carlo: same, except the strongest baseline (DAMIL-R)
+          \emph{ties} on thresholded F1 but still loses the AUC.
+  \end{itemize}
+  \begin{center}\small The official-split ranking is not an artefact of one split.\end{center}
+\end{frame}
+
+% =====================================================================
+\section{Can you trust the model?}
+
+\begin{frame}{Interpretability we \emph{measure}, not assume}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item We validate attention against occlusion (ERASER metrics).
+        \item \textbf{Plain head:} linear pooling $\Rightarrow$ \good{trivially faithful}
+              ($\rho=+0.99$); attention near-uniform, cross-seed stability 0.97.
+        \item \textbf{GRU head:} selective attention but \emph{not} per-chunk faithful
+              ($\rho=-0.28$).
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+      \centering
+      \includegraphics[width=\linewidth]{fig3_faithfulness.pdf}
+      \\{\scriptsize Faithfulness is a property of the pooling, not of attention itself.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{What the model keys on --- a faithful explanation}
+  \begin{center}
+    \includegraphics[width=0.6\textwidth]{fig_occlusion_attribution.pdf}
+  \end{center}
+  \begin{itemize}\small
+    \item Top depression-supporting chunks (largest leave-one-out $\Delta$probability), by \emph{text}:
+          \textbf{(a)} full dialogue $\to$ prior-diagnosis / therapy windows;
+          \textbf{(b)} participant-only $\to$ own disclosures (low mood, sleep, trauma).
+    \item Faithful, clinically sensible, \good{answer-driven} --- not a diagnostic-question shortcut.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{No interviewer-prompt shortcut}
+  \begin{itemize}
+    \item The known shortcut: lean on the therapist's late mental-health questions.
+    \item Our model's position--attention correlation is $\approx 0$
+          (\num{-0.03} dev, \num{-0.04} test) --- attention is spread across the interview.
+    \item Retrain with \emph{all interviewer lines removed} (participant-only):
+          every metric \bad{drops} (AUC $0.868\!\rightarrow\!0.801$) \emph{and} the
+          position--attention correlation \emph{rises} $-0.04\!\rightarrow\!+0.19$.
+    \item[$\Rightarrow$] Position-reliance appears \emph{only after} the prompts are gone ---
+          the opposite of a shortcut-rider (which keys on the prompts \emph{while present}
+          and would collapse without them).
+    \item[$\Rightarrow$] And DAIC's prompts are near-constant across classes, so they
+          \emph{cannot} discriminate the label: the signal they add is \good{topical context}.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Clinical read-out --- PHQ-8 symptom head}
+  \begin{columns}[c]
+    \begin{column}{0.58\textwidth}
+      \centering
+      \begin{tikzpicture}
+      \begin{axis}[
+        ybar, width=\linewidth, height=4.6cm, bar width=6pt, ymin=0.5, ymax=1.0,
+        ylabel={\footnotesize per-item ROC-AUC}, ylabel near ticks,
+        symbolic x coords={Tired,No-Interest,Failure,Depressed,Moving,Sleep,Appetite,Concentr.},
+        xtick=data, x tick label style={rotate=40,anchor=east,font=\scriptsize},
+        ytick={0.5,0.6,0.7,0.8,0.9,1.0}, y tick label style={font=\scriptsize},
+        ymajorgrids, grid style={dotted,gray},
+        nodes near coords, nodes near coords style={font=\tiny},
+        every node near coord/.append style={/pgf/number format/fixed,/pgf/number format/precision=2},
+        enlarge x limits=0.07,
+      ]
+      \addplot[fill=mAccent,draw=mAccent] coordinates {
+        (Tired,0.944) (No-Interest,0.934) (Failure,0.846) (Depressed,0.843)
+        (Moving,0.829) (Sleep,0.793) (Appetite,0.776) (Concentr.,0.737)};
+      \draw[dashed,gray] ({rel axis cs:0,0}|-{axis cs:Tired,0.5}) -- ({rel axis cs:1,0}|-{axis cs:Tired,0.5});
+      \end{axis}
+      \end{tikzpicture}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}
+        \item Auxiliary head predicts each PHQ-8 item; every symptom \good{above chance}
+              (0.74--0.94 dev AUC).
+        \item Strongest on the most lexicalised symptoms (fatigue, anhedonia), weakest on concentration.
+        \item Attention concentrates on sleep / fatigue / mood chunks --- links the explanation
+              to the diagnostic criteria.
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% --- fine-tuning slide commented out per request (re-enable: remove \iffalse/\fi) ---
+\iffalse
+\begin{frame}{Scientific honesty: fine-tuning does \emph{not} help}
+  We asked whether fine-tuning the encoder lifts the ceiling. Pre-registered, staged search:
+  \begin{itemize}
+    \item Development grid showed a $\approx\!+0.02$ AUC ``lift'' (LoRA / last-$k$ / full).
+    \item On a leakage-free OOF probe ($N{=}142$), the \good{frozen} encoder ranks \emph{first}.
+    \item Cross-validation: the nominal gap \emph{flips sign} between schemes --- noise.
+    \item No finalist beats the deployed frozen system; DAPT \bad{collapses} (catastrophic forgetting).
+  \end{itemize}
+  \begin{alertblock}{Why this is a strength}
+    The staged protocol caught the development optimism \emph{before} the test split was spent ---
+    we don't over-claim a win the data doesn't support.
+  \end{alertblock}
+\end{frame}
+\fi
+
+\begin{frame}{It generalises across corpora}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}\small
+        \item Zero-shot transfer to E-DAIC (AVEC 2019): frozen model, no target adaptation, no threshold tuning.
+        \item The model \good{transfers} --- and \emph{order-free} pooling transfers best
+              (AUC \num{0.716}) over the temporal GRU (\num{0.662}).
+        \item Lesson: the head that \emph{tops the dev split} (GRU, dev AUC \num{0.900})
+              is \bad{worse on every held-out test} --- DAIC test \emph{and} zero-shot
+              E-DAIC --- so dev AUC mis-selects; order-free is the more robust bias under shift.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+      \centering\footnotesize
+      \setlength{\tabcolsep}{4pt}
+      \begin{tabular}{@{}lcc@{}}
+        \toprule
+        & \multicolumn{2}{c}{\textbf{ROC-AUC}} \\
+        \cmidrule(lr){2-3}
+        \textbf{Source head} & \textbf{DAIC test} & \textbf{E-DAIC 0-shot} \\
+        \midrule
+        order-free (none) & \good{\num{.819}}{\tiny$\pm$.019}
+          & \celld{\good{\num{.716}}}{.017}{.55,.88} \\[3pt]
+        BiGRU & .786{\tiny$\pm$.040}
+          & \celld{.662}{.011}{.48,.83} \\
+        \bottomrule
+      \end{tabular}
+      \\[3pt]{\scriptsize 30-seed mean$\pm$std; E-DAIC adds subject-level
+       bootstrap 95\% [CI] (56 test subjects). GRU tops DAIC \emph{dev} (.900) but is worse on both tests.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% =====================================================================
+\section{Wrap-up}
+
+\begin{frame}{Contributions \& takeaways}
+  \textbf{Contributions}
+  \begin{enumerate}
+    \item \textbf{TC-MIL} --- dialogue-chunk instances turn degenerate turns into discriminative ones.
+    \item \textbf{A leakage-free protocol} under which a single network beats the cleanest verified
+          baseline and matches the best reported single model.
+    \item \textbf{Extensive validation} --- ablations, internal cross-validation, measured
+          interpretability, and an explicit bias control.
+  \end{enumerate}
+  \vfill
+  \textbf{Takeaways}
+  \begin{itemize}
+    \item \good{The instance definition}, not the aggregation network, carries the signal.
+    \item \good{Honest evaluation is a feature}: the protocol makes the numbers trustworthy and comparable.
+    \item \good{Trust is measured}: faithfulness quantified, the interviewer-prompt shortcut ruled out.
+  \end{itemize}
+  \vfill
+  \begin{center}\small Code \& weights: \href{https://github.com/SaverioNapolitano/tcmil}{\texttt{github.com/SaverioNapolitano/tcmil}}\end{center}
+\end{frame}
+
+\begin{frame}[standout]
+  Thank you --- questions?
+\end{frame}
+
+\end{document}

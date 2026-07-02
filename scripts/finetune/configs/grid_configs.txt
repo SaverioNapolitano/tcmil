@@ -1,0 +1,22 @@
+# Stage-1 grid: one run per line (name|flags). Dev-selection only, no test.
+# All runs: bge-large + GRU head unless overridden. 5 seeds each.
+frozen_ctrl|--ft_method frozen
+bitfit_lr1e4|--ft_method bitfit --encoder_lr 1e-4
+lora_r8_lr1e4|--ft_method lora --lora_r 8 --encoder_lr 1e-4
+lora_r8_lr2e4|--ft_method lora --lora_r 8 --encoder_lr 2e-4
+lora_r16_lr1e4|--ft_method lora --lora_r 16 --encoder_lr 1e-4
+lora_r16_lr2e4|--ft_method lora --lora_r 16 --encoder_lr 2e-4
+lora_r32_lr1e4|--ft_method lora --lora_r 32 --encoder_lr 1e-4
+lora_r32_lr2e4|--ft_method lora --lora_r 32 --encoder_lr 2e-4
+lora_r16_ffn_lr1e4|--ft_method lora --lora_r 16 --lora_targets attn_ffn --encoder_lr 1e-4
+lora_r16_lr1e4_nowarm|--ft_method lora --lora_r 16 --encoder_lr 1e-4 --head_warmup_epochs 0
+last2_lr1e5|--ft_method last_k --unfreeze_last_k 2 --encoder_lr 1e-5
+last2_lr2e5|--ft_method last_k --unfreeze_last_k 2 --encoder_lr 2e-5
+last4_lr1e5|--ft_method last_k --unfreeze_last_k 4 --encoder_lr 1e-5
+last4_lr2e5|--ft_method last_k --unfreeze_last_k 4 --encoder_lr 2e-5
+full_lr5e6|--ft_method full --encoder_lr 5e-6
+full_lr1e5|--ft_method full --encoder_lr 1e-5
+mxbai_frozen_ctrl|--ft_method frozen --encoder_name mixedbread-ai/mxbai-embed-large-v1
+mxbai_lora_r16_lr1e4|--ft_method lora --lora_r 16 --encoder_lr 1e-4 --encoder_name mixedbread-ai/mxbai-embed-large-v1
+dapt_frozen|--ft_method frozen --encoder_name checkpoints/dapt_bge_large
+dapt_lora_r16_lr1e4|--ft_method lora --lora_r 16 --encoder_lr 1e-4 --encoder_name checkpoints/dapt_bge_large

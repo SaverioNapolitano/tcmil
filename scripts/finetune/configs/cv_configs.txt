@@ -1,0 +1,8 @@
+# Stage-3 CV — SELECTED from the job-2 stage-1 grid.
+# Single stage-1 winner vs frozen control. Each line runs kfold + kfold repeat-2
+# (seed 1042) + mc, all --threshold_mode testprev. array=2 (line 1 winner, line 2 frozen).
+# Winner = mxbai_lora_r16_lr1e4: rank-1 by the PRE-REGISTERED metric (5-seed
+# PER-SEED dev AUC mean 0.916, lowest variance +/-0.005), not the dev-ensemble AUC.
+# Parallel with job 3 (independent) under the 4-job cap.
+winner|--ft_method lora --lora_r 16 --encoder_lr 1e-4 --encoder_name mixedbread-ai/mxbai-embed-large-v1
+frozen|--ft_method frozen

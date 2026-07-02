@@ -1,0 +1,22 @@
+#!/bin/bash
+#SBATCH --job-name=tcmil-ft4-cv
+#SBATCH --array=1-2%4
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=48G
+#SBATCH --time=14:30:00         # under the 14h30 account cap; resubmit to resume
+#SBATCH --output=results/ft/logs/job4_cv_%A_%a.out
+#SBATCH --requeue              # auto-reschedule if a node dies
+## adjust to your cluster:
+##SBATCH --partition=gpu
+##SBATCH --account=YOUR_ACCOUNT
+#
+# JOB 4 — Stage-3 cross-validation (winner vs frozen). Needs JOB 2 finished AND
+# scripts/finetune/configs/cv_configs.txt edited with the grid winner. array size = number of cv
+# lines (default 2). Each task = one config (kfold + kfold_r2 + mc). Independent
+# of JOB 3 -> JOB 3 and JOB 4 can run at the same time (mind the 4-job cap).
+set -e
+export PYTHONUNBUFFERED=1  # flush python stdout -> a kill still records the traceback
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p results/ft/logs
+bash scripts/finetune/run_cv.sh "$SLURM_ARRAY_TASK_ID"
