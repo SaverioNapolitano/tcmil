@@ -271,5 +271,4 @@ scripts/           runnable experiment + cluster scripts (see 5. Scripts)
 data/              daic-woz/ + e-daic/ (user-provided labels + downloaded transcripts; git-ignored)
 results/           run outputs (results.json per run)
 checkpoints/       saved weights
-paper/             LaTeX manuscript, figures, refs
 ```
